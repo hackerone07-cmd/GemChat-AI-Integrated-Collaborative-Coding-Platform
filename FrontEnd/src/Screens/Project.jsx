@@ -304,7 +304,7 @@ const Project = () => {
         });
       });
     }
-  }, [activeFile, aiCodeBlocks]);
+  }, [activeFile ,aiCodeBlocks]);
 
 const toggleSelection = async (userId) => {
   // update UI state first
