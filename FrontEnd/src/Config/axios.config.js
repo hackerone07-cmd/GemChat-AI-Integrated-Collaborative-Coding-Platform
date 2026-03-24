@@ -4,23 +4,30 @@ const axiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
 });
 
-// Always pick up the latest token — fixes the stale-token bug
-// where logging in after a page refresh would still send the old token
+// Always attach the latest token from localStorage
 axiosInstance.interceptors.request.use((config) => {
   const token = localStorage.getItem("token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// Global response error handler
+// Auto-logout ONLY when a protected route returns 401 and a token was already stored.
+// Never redirect when the 401 came from /login or /register — those are expected
+// "wrong credentials" errors that should show a toast, not cause a page reload.
 axiosInstance.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const status          = err.response?.status;
+    const url             = err.config?.url || "";
+    const isAuthEndpoint  = url.includes("/users/login") || url.includes("/users/register");
+    const hadToken        = !!localStorage.getItem("token");
+
+    if (status === 401 && !isAuthEndpoint && hadToken) {
       localStorage.removeItem("token");
       localStorage.removeItem("user");
       window.location.href = "/login";
     }
+
     return Promise.reject(err);
   }
 );

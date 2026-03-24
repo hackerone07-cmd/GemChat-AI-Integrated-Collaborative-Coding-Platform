@@ -13,22 +13,45 @@ export const createUserController = async (req, res) => {
   } catch (error) {
     console.error("Register error:", error);
     if (error.code === 11000 && error.keyPattern?.email)
-      return res.status(400).json({ error: "Email already exists" });
+      return res.status(400).json({ error: "Email already in use" });
     res.status(400).json({ error: error.message });
   }
 };
 
 // ── Login ──────────────────────────────────────────────────────────────────
+// Accepts { email, password }
+// Also accepts { identifier, password } for backward compat (identifier = email or username)
 export const loginUserController = async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email }).select("+password");
-    if (!user)
-      return res.status(401).json({ error: "No account found with this email" });
+    const { email, identifier, password } = req.body;
+
+    // Resolve the lookup value — prefer explicit `email`, fall back to `identifier`
+    const loginValue = (email || identifier || "").trim();
+
+    if (!loginValue || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    // Find user — try email first, then username
+    let user = await User.findOne({
+      email: loginValue.toLowerCase(),
+    }).select("+password");
+
+    // If not found by email, try username (handles identifier = username case)
+    if (!user) {
+      user = await User.findOne({
+        username: loginValue,
+      }).select("+password");
+    }
+
+    if (!user) {
+      return res.status(401).json({ error: "No account found with that email" });
+    }
 
     const isMatch = await user.isValidPassword(password);
-    if (!isMatch)
+    if (!isMatch) {
       return res.status(401).json({ error: "Incorrect password" });
+    }
 
     const token = user.generateJWT();
     delete user._doc.password;
@@ -39,7 +62,7 @@ export const loginUserController = async (req, res) => {
   }
 };
 
-// ── Get profile (fresh from DB, not just JWT payload) ──────────────────────
+// ── Get profile (fresh from DB) ────────────────────────────────────────────
 export const getProfileController = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select("-password");
@@ -51,21 +74,15 @@ export const getProfileController = async (req, res) => {
   }
 };
 
-// ── Update profile (username / password) ──────────────────────────────────
+// ── Update profile ─────────────────────────────────────────────────────────
 export const updateProfileController = async (req, res) => {
   try {
     const { username, currentPassword, newPassword } = req.body;
-    const user = await userService.updateProfile({
-      userId:          req.user._id,
-      username,
-      currentPassword,
-      newPassword,
+    const user  = await userService.updateProfile({
+      userId: req.user._id, username, currentPassword, newPassword,
     });
-
-    // Issue a fresh JWT so the new username is immediately reflected
     const token = user.generateJWT();
     delete user._doc.password;
-
     res.status(200).json({ user, token });
   } catch (error) {
     console.error("Update profile error:", error);
@@ -73,7 +90,7 @@ export const updateProfileController = async (req, res) => {
   }
 };
 
-// ── Logout (blacklist token in Redis) ─────────────────────────────────────
+// ── Logout ─────────────────────────────────────────────────────────────────
 export const logoutController = async (req, res) => {
   try {
     const authHeader = req.headers.authorization;

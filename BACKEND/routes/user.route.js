@@ -26,10 +26,10 @@ router.post(
 router.post(
   "/login",
   [
-    body("identifier")
-      .notEmpty().withMessage("Username or email is required")
-      .isLength({ min: 2, max: 100 }).withMessage("Must be 2–100 characters")
-      .trim(),
+    body("email")
+      .notEmpty().withMessage("Email is required")
+      .isEmail().withMessage("Enter a valid email address")
+      .normalizeEmail(),
     body("password")
       .notEmpty().withMessage("Password is required")
       .isLength({ min: 3 }).withMessage("Password too short"),
