@@ -315,12 +315,9 @@ const Project=()=>{
 
   // ── Terminal / Console ───────────────────────────────────────────────────────
   const [lines,setLines]=useState([]);
-  const [termInput,setTermInput]=useState("");      // ← user-typeable command input
   const [running,setRunning]=useState(false);
   const termRef=useRef(null);
-  const termInputRef=useRef(null);
-  const shellRef=useRef(null);                      // ← active WebContainer process
-  const shellInputRef=useRef(null);                 // ← WritableStreamDefaultWriter for stdin
+  const shellRef=useRef(null);
 
   // ── WebContainer + preview ───────────────────────────────────────────────────
   const [wc,setWc]=useState(null);
@@ -416,73 +413,98 @@ const Project=()=>{
     sendMessage("file-renamed",{projectId,oldPath:old,newPath:np,type});
   },[files,active,projectId]);
 
-  // ── Run in WebContainer ───────────────────────────────────────────────────────
-  // Calls getWebcontainer() directly every time — avoids the stale-closure bug
-  // where useCallback captured wc=null and retried forever via setTimeout.
-  const runWebContainerWith=useCallback(async(fileMap)=>{
+  // ── Convert flat { "src/foo.jsx": ... } → WebContainer nested tree ────────────
+  // WebContainer mount() requires:  { src: { directory: { "foo.jsx": { file: {...} } } } }
+  // NOT a flat map like:            { "src/foo.jsx": { file: {...} } }
+  const toWcTree = (flatFiles) => {
+    const tree = {};
+    Object.entries(flatFiles).forEach(([path, f]) => {
+      const parts = path.replace(/^\//, "").split("/").filter(Boolean);
+      let node = tree;
+      parts.forEach((part, i) => {
+        if (i === parts.length - 1) {
+          // leaf → file
+          node[part] = { file: { contents: f.content || "" } };
+        } else {
+          // intermediate → directory
+          if (!node[part]) node[part] = { directory: {} };
+          node = node[part].directory;
+        }
+      });
+    });
+    return tree;
+  };
+
+  // ── Run React project in WebContainer → live preview in Browser tab ───────────
+  // Only used for React/web projects (has package.json). All other languages
+  // go through Wandbox in the Console tab — no WebContainer terminal needed.
+  const runWebContainerWith = useCallback(async (fileMap) => {
     setRunning(true);
-    clrLines();setRpTab("console");
-    addLine("⏳  Booting WebContainer (first load takes ~5s)...","info");
+    clrLines(); setRpTab("console");
+    addLine("⏳  Booting WebContainer (first load ~5s)...", "info");
 
     let instance;
-    try{
-      instance=await getWebcontainer(); // always returns the live instance
-      setWc(instance);                  // keep state in sync for terminal commands
-    }catch(e){
-      addLine(`✗  WebContainer failed to boot: ${e.message}`,"error");
-      addLine("   Make sure your app is served with COOP/COEP headers (already set in vite.config.js).","warning");
-      setRunning(false);return;
+    try {
+      instance = await getWebcontainer();
+      setWc(instance);
+    } catch (e) {
+      addLine(`✗  WebContainer failed to boot: ${e.message}`, "error");
+      addLine("   Ensure COOP/COEP headers are set (see vite.config.js).", "warning");
+      setRunning(false); return;
     }
 
-    try{
-      // Build mount map — prefer passed fileMap, fall back to current files state
-      const src=fileMap||files;
-      const mf={};
-      Object.entries(src).forEach(([p,f])=>{mf[p]={file:{contents:f.content||""}};});
-      await instance.mount(mf);
-      addLine("📦  Running npm install...","info");
+    try {
+      const src = fileMap || files;
+      // ↓↓ THE FIX: build nested tree, not flat paths
+      const mountTree = toWcTree(src);
+      await instance.mount(mountTree);
 
-      if(shellRef.current){try{await shellRef.current.kill();}catch{} shellRef.current=null;}
+      addLine("📦  npm install...", "info");
+      if (shellRef.current) { try { await shellRef.current.kill(); } catch { } shellRef.current = null; }
 
-      const ip=await instance.spawn("npm",["install"]);
-      ip.output.pipeTo(new WritableStream({write(d){
-        const t=d.trim();if(t)addLine(t,"output");
-      }}));
-      const installExit=await ip.exit;
-      if(installExit!==0){addLine("✗  npm install failed — check package.json","error");setRunning(false);return;}
+      const ip = await instance.spawn("npm", ["install"]);
+      ip.output.pipeTo(new WritableStream({ write(d) { const t = d.trim(); if (t) addLine(t, "output"); } }));
+      const installExit = await ip.exit;
+      if (installExit !== 0) { addLine("✗  npm install failed", "error"); setRunning(false); return; }
 
-      addLine("✓  Dependencies installed","success");
-      addLine("🚀  Starting Vite dev server...","info");
+      addLine("✓  Dependencies installed", "success");
+      addLine("🚀  Starting Vite dev server...", "info");
 
-      const sp=await instance.spawn("npm",["run","dev"]);
-      shellRef.current=sp;
-      sp.output.pipeTo(new WritableStream({write(d){
-        const t=d.trim();if(t)addLine(t,"output");
-      }}));
+      const sp = await instance.spawn("npm", ["run", "dev"]);
+      shellRef.current = sp;
+      sp.output.pipeTo(new WritableStream({ write(d) { const t = d.trim(); if (t) addLine(t, "output"); } }));
 
-      // server-ready fires when Vite binds to a port — switch to Browser tab
-      instance.on("server-ready",(_port,url)=>{
-        addLine(`✓  Server ready → ${url}`,"success");
-        addLine("   Switching to Browser tab...","info");
+      // server-ready → auto-switch to Browser tab
+      instance.on("server-ready", (_port, url) => {
+        addLine(`✓  Server ready → ${url}`, "success");
         setPreviewSrc(url);
         setPreviewUrl(url);
-        setRpTab("browser");    // ← auto-switch to Browser tab
+        setRpTab("browser");
         setRunning(false);
       });
 
-      sp.exit.then(code=>{
-        if(code!=null){
-          addLine(code===0?"  ✓ process exited":`  ✗ process exited ${code}`,code===0?"success":"error");
+      sp.exit.then(code => {
+        if (code != null) {
+          addLine(code === 0 ? "  ✓ process exited" : `  ✗ process exited ${code}`, code === 0 ? "success" : "error");
           setRunning(false);
         }
       });
-    }catch(e){
-      addLine(`✗  ${e.message}`,"error");
+    } catch (e) {
+      addLine(`✗  ${e.message}`, "error");
       setRunning(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[files,addLine]);
+  }, [files, addLine]);
 
+  // ── Kill the running WebContainer process (dev server) ────────────────────────
+  const killProcess = useCallback(async () => {
+    if (!shellRef.current) return;
+    addLine("^C  stopping server...", "warning");
+    try { await shellRef.current.kill(); } catch { }
+    shellRef.current = null;
+    setRunning(false);
+    setPreviewSrc(null);
+  }, [addLine]);
   // ── One-click React scaffold ──────────────────────────────────────────────────
   const scaffoldReact=useCallback(async()=>{
     if(scaffolding)return;
@@ -505,37 +527,6 @@ const Project=()=>{
     await runWebContainerWith(newFiles);
   },[scaffolding,projectId,runWebContainerWith]);
 
-  // ── Terminal: run arbitrary command ──────────────────────────────────────────
-  const runTerminalCommand=useCallback(async(cmdStr)=>{
-    if(!cmdStr.trim())return;
-    addLine(`$ ${cmdStr}`,"command");
-    const parts=cmdStr.trim().split(/\s+/);
-    const cmd=parts[0];const args=parts.slice(1);
-
-    let instance;
-    try{ instance=await getWebcontainer();setWc(instance); }
-    catch(e){ addLine(`⚠  WebContainer not available: ${e.message}`,"warning");return; }
-
-    if(shellRef.current){try{await shellRef.current.kill();}catch{}shellRef.current=null;}
-    setRunning(true);
-    try{
-      const proc=await instance.spawn(cmd,args);
-      shellRef.current=proc;
-      proc.output.pipeTo(new WritableStream({write(d){
-        d.split("\n").forEach(l=>{if(l.trim())addLine(l,"output");});
-      }}));
-      if((cmd==="npm"&&(args[0]==="start"||args[0]==="run"))||cmd==="vite"){
-        instance.on("server-ready",(_,url)=>{
-          addLine(`✓ Server → ${url}`,"success");
-          setPreviewSrc(url);setPreviewUrl(url);setRpTab("browser");
-        });
-      }
-      const code=await proc.exit;
-      addLine(code===0?"  ✓ done":`  ✗ exited ${code}`,code===0?"success":"error");
-    }catch(e){addLine(`✗ ${e.message}`,"error");}
-    finally{setRunning(false);shellRef.current=null;}
-  },[addLine]);
-
   // ── Right panel drag resize ───────────────────────────────────────────────────
   const startRpDrag=useCallback(e=>{
     e.preventDefault();
@@ -545,21 +536,6 @@ const Project=()=>{
     document.addEventListener("mousemove",onMove);
     document.addEventListener("mouseup",onUp);
   },[rpWidth]);
-
-  const handleTermInput=useCallback(e=>{
-    if(e.key!=="Enter")return;
-    const val=termInput.trim();
-    if(!val)return;
-    setTermInput("");
-    runTerminalCommand(val);
-  },[termInput,runTerminalCommand]);
-
-  const killProcess=useCallback(async()=>{
-    if(!shellRef.current)return;
-    addLine("^C","warning");
-    try{await shellRef.current.kill();}catch{}
-    shellRef.current=null;setRunning(false);
-  },[addLine]);
 
   // ── Cursor decorations ────────────────────────────────────────────────────────
   const updateDecs=useCallback(()=>{
@@ -664,9 +640,6 @@ const Project=()=>{
   // ── Auto-scroll ───────────────────────────────────────────────────────────────
   useEffect(()=>{const b=chatBox.current;if(b)requestAnimationFrame(()=>b.scrollTop=b.scrollHeight);},[msgs]);
   useEffect(()=>{if(termRef.current)termRef.current.scrollTop=termRef.current.scrollHeight;},[lines]);
-  // Focus terminal input when console tab opens
-  useEffect(()=>{if(rpTab==="console")setTimeout(()=>termInputRef.current?.focus(),80);},[rpTab]);
-
   // ── Send chat message ─────────────────────────────────────────────────────────
   const sendMsg=()=>{
     if(!chatInput.trim())return;
@@ -975,18 +948,24 @@ const Project=()=>{
             </div>
           )}
 
-          {/* ── Console / Terminal ───────────────────── */}
+          {/* ── Console — output for Wandbox (other langs) or React dev server ── */}
           {rpTab==="console"&&(
             <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
               {/* Toolbar */}
               <div style={{height:30,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   {running&&<><span style={{color:C.yellow,fontSize:9,animation:"spin 1s linear infinite"}}>◌</span><span style={{color:C.yellow,fontSize:10,fontWeight:600}}>Running</span></>}
-                  {!running&&lines.some(l=>l.type==="success"&&l===lines[lines.length-1])&&<><span style={{color:C.green,fontSize:9}}>●</span><span style={{color:C.green,fontSize:10}}>Done</span></>}
+                  {!running&&lines.length>0&&lines[lines.length-1]?.type==="success"&&<><span style={{color:C.green,fontSize:9}}>●</span><span style={{color:C.green,fontSize:10}}>Done</span></>}
                   {!running&&lines.filter(l=>l.type==="error").length>0&&<><span style={{color:C.red,fontSize:9}}>●</span><span style={{color:C.red,fontSize:10}}>{lines.filter(l=>l.type==="error").length} error{lines.filter(l=>l.type==="error").length!==1?"s":""}</span></>}
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  {running&&<button onClick={killProcess} style={{background:C.redSoft,border:`1px solid rgba(255,85,85,0.4)`,color:C.red,borderRadius:4,padding:"2px 8px",cursor:"pointer",fontSize:10,fontFamily:"inherit",fontWeight:600}}>■ Kill</button>}
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  {/* Show Restart only when dev server is active */}
+                  {hasReact&&shellRef.current&&!running&&(
+                    <button onClick={()=>runWebContainerWith(null)} style={{background:C.accentSoft,border:`1px solid ${C.accentBrd}`,color:C.accent,borderRadius:4,padding:"2px 8px",cursor:"pointer",fontSize:10,fontFamily:"inherit",fontWeight:600}}>↺ Restart</button>
+                  )}
+                  {running&&hasReact&&(
+                    <button onClick={killProcess} style={{background:C.redSoft,border:`1px solid rgba(255,85,85,0.4)`,color:C.red,borderRadius:4,padding:"2px 8px",cursor:"pointer",fontSize:10,fontFamily:"inherit",fontWeight:600}}>■ Stop</button>
+                  )}
                   <button onClick={clrLines} style={{background:"none",border:"none",color:C.textDim,cursor:"pointer",fontSize:10,fontFamily:"inherit",padding:"2px 6px",borderRadius:3}}
                     onMouseEnter={e=>e.currentTarget.style.color=C.text}
                     onMouseLeave={e=>e.currentTarget.style.color=C.textDim}
@@ -994,29 +973,19 @@ const Project=()=>{
                 </div>
               </div>
 
-              {/* Output area */}
-              <div ref={termRef} onClick={()=>termInputRef.current?.focus()} style={{flex:1,overflowY:"auto",padding:"10px 12px 4px",background:"#0d0d0d",fontFamily:"'Fira Code','JetBrains Mono',Menlo,monospace",fontSize:12,lineHeight:1.65,cursor:"text"}}>
-                {lines.length===0&&<span style={{color:C.textDim}}>Ready — type a command below or click ▶ Run</span>}
+              {/* Output — Wandbox results or React dev server output */}
+              <div ref={termRef} style={{flex:1,overflowY:"auto",padding:"10px 12px",background:"#0d0d0d",fontFamily:"'Fira Code','JetBrains Mono',Menlo,monospace",fontSize:12,lineHeight:1.65}}>
+                {lines.length===0&&(
+                  <span style={{color:C.textDim}}>
+                    {hasReact
+                      ? "Click ▶ Run to start the React dev server → live preview in Browser tab"
+                      : "Click ▶ Run to execute the active file via Wandbox"}
+                  </span>
+                )}
                 {lines.map(l=>(
                   <div key={l.id} style={{color:lc(l.type),whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{l.t}</div>
                 ))}
-              </div>
-
-              {/* ── Interactive command input ─── */}
-              <div style={{display:"flex",alignItems:"center",gap:0,borderTop:`1px solid ${C.border}`,background:"#0d0d0d",flexShrink:0}}>
-                <span style={{color:C.green,fontSize:12,padding:"0 8px",fontFamily:"'Fira Code',monospace",flexShrink:0,userSelect:"none"}}>$</span>
-                <input
-                  ref={termInputRef}
-                  value={termInput}
-                  onChange={e=>setTermInput(e.target.value)}
-                  onKeyDown={e=>{
-                    if(e.key==="Enter")handleTermInput(e);
-                    if(e.key==="c"&&e.ctrlKey){e.preventDefault();killProcess();}
-                  }}
-                  placeholder={running?"(process running — Ctrl+C to kill)":"npm install react  /  npm run dev  /  ls"}
-                  disabled={false}
-                  style={{flex:1,padding:"8px 0",background:"transparent",border:"none",color:C.text,fontSize:12,outline:"none",fontFamily:"'Fira Code','JetBrains Mono',monospace",caretColor:C.green}}
-                />
+                {!running&&lines.length>0&&<span style={{color:C.green,animation:"blink 1s step-end infinite"}}>█</span>}
               </div>
             </div>
           )}
