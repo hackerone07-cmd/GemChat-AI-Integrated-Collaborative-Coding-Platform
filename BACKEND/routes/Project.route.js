@@ -97,3 +97,30 @@ router.post(
 );
 
 export default router;
+
+// File tree persistence
+import { saveFileTree, saveOneFile, deleteFileFromTree } from "../controllers/Project.controller.js";
+
+router.put(
+  "/:projectId/files",
+  authMiddleware.authUser,
+  param("projectId").isMongoId().withMessage("Invalid projectId"),
+  validate,
+  saveFileTree
+);
+
+router.patch(
+  "/:projectId/files/:encodedPath",
+  authMiddleware.authUser,
+  param("projectId").isMongoId().withMessage("Invalid projectId"),
+  validate,
+  saveOneFile
+);
+
+router.delete(
+  "/:projectId/files/:encodedPath",
+  authMiddleware.authUser,
+  param("projectId").isMongoId().withMessage("Invalid projectId"),
+  validate,
+  deleteFileFromTree
+);

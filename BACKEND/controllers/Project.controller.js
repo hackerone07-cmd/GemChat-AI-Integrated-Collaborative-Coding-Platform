@@ -202,3 +202,86 @@ export const getProjectById = async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 };
+
+// ── PUT /projects/:projectId/files — save entire fileTree ─────────────────
+export const saveFileTree = async (req, res) => {
+  try {
+    const me = await getMe(req);
+    const { projectId } = req.params;
+    const { fileTree } = req.body; // { "src/App.jsx": { content, lang }, ... }
+
+    if (!fileTree || typeof fileTree !== "object")
+      return res.status(400).json({ error: "fileTree is required" });
+
+    const project = await (await import("../models/Project.model.js")).default.findById(projectId);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    const isMember = project.users.some(u => u.toString() === me._id.toString());
+    if (!isMember) return res.status(403).json({ error: "Access denied" });
+
+    // Replace entire fileTree
+    project.fileTree = new Map(Object.entries(fileTree));
+    await project.save();
+
+    res.status(200).json({ message: "File tree saved" });
+  } catch (err) {
+    console.error("saveFileTree error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// ── PATCH /projects/:projectId/files/:encodedPath — save one file ─────────
+export const saveOneFile = async (req, res) => {
+  try {
+    const me = await getMe(req);
+    const { projectId, encodedPath } = req.params;
+    const { content, lang } = req.body;
+    const filePath = decodeURIComponent(encodedPath);
+
+    const project = await (await import("../models/Project.model.js")).default.findById(projectId);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    const isMember = project.users.some(u => u.toString() === me._id.toString());
+    if (!isMember) return res.status(403).json({ error: "Access denied" });
+
+    project.fileTree.set(filePath, { content: content ?? "", lang: lang ?? "plaintext" });
+    await project.save();
+
+    res.status(200).json({ message: "File saved" });
+  } catch (err) {
+    console.error("saveOneFile error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// ── DELETE /projects/:projectId/files/:encodedPath — delete one file/dir ──
+export const deleteFileFromTree = async (req, res) => {
+  try {
+    const me = await getMe(req);
+    const { projectId, encodedPath } = req.params;
+    const { type } = req.query; // "file" | "dir"
+    const filePath = decodeURIComponent(encodedPath);
+
+    const project = await (await import("../models/Project.model.js")).default.findById(projectId);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    const isMember = project.users.some(u => u.toString() === me._id.toString());
+    if (!isMember) return res.status(403).json({ error: "Access denied" });
+
+    if (type === "dir") {
+      for (const key of project.fileTree.keys()) {
+        if (key.startsWith(filePath + "/") || key === filePath) {
+          project.fileTree.delete(key);
+        }
+      }
+    } else {
+      project.fileTree.delete(filePath);
+    }
+    await project.save();
+
+    res.status(200).json({ message: "File deleted" });
+  } catch (err) {
+    console.error("deleteFileFromTree error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};

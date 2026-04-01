@@ -380,12 +380,15 @@ const Project=()=>{
   };
   const starter=(name,lang)=>{const s=STARTS[lang];return s?typeof s==="function"?s(name):s:"";};
 
-  // ── CRUD ──────────────────────────────────────────────────────────────────────
+  // ── CRUD — every mutation persists to DB immediately ─────────────────────────
   const createFile=useCallback((par,raw)=>{
     const name=raw.trim();const fp=par?`${par}/${name}`:name;
     if(files[fp]){alert(`"${fp}" already exists`);return;}
     const lang=getLang(name);const content=starter(name,lang);
-    setFiles(p=>({...p,[fp]:{content,lang}}));openFile(fp);
+    setFiles(p=>({...p,[fp]:{content,lang}}));
+    openFile(fp);
+    // Persist to DB
+    axios.patch(`/projects/${projectId}/files/${encodeURIComponent(fp)}`,{content,lang}).catch(console.error);
     sendMessage("file-created",{projectId,path:fp,content,lang});
   },[files,openFile,projectId]);
 
@@ -394,6 +397,8 @@ const Project=()=>{
     const kp=`${fp}/.gitkeep`;
     if(files[kp]){alert(`"${fp}" exists`);return;}
     setFiles(p=>({...p,[kp]:{content:"",lang:"plaintext"}}));
+    // Persist placeholder to DB so folder survives refresh
+    axios.patch(`/projects/${projectId}/files/${encodeURIComponent(kp)}`,{content:"",lang:"plaintext"}).catch(console.error);
     sendMessage("file-created",{projectId,path:kp,content:"",lang:"plaintext"});
   },[files,projectId]);
 
@@ -402,14 +407,30 @@ const Project=()=>{
     setFiles(p=>{const n={...p};if(type==="dir")Object.keys(n).forEach(k=>{if(k.startsWith(path+"/"))delete n[k];});else delete n[path];return n;});
     setTabs(p=>type==="dir"?p.filter(t=>!t.startsWith(path+"/")):p.filter(t=>t!==path));
     if(active===path||(type==="dir"&&active?.startsWith(path+"/")))setActive(null);
+    // Persist deletion to DB
+    axios.delete(`/projects/${projectId}/files/${encodeURIComponent(path)}?type=${type}`).catch(console.error);
     sendMessage("file-deleted",{projectId,path,type});
   },[active,projectId]);
 
   const renameItem=useCallback((old,nn,type)=>{
     const parts=old.split("/");parts[parts.length-1]=nn;const np=parts.join("/");
     if(files[np]){alert(`"${np}" exists`);return;}
-    setFiles(p=>{const n={...p};if(type==="file"){n[np]={...n[old],lang:getLang(nn)};delete n[old];}else{Object.keys(n).forEach(k=>{if(k.startsWith(old+"/")){n[k.replace(old,np)]=n[k];delete n[k];}});}return n;});
-    setTabs(p=>p.map(t=>t===old?np:t));if(active===old)setActive(np);
+    // Build new file map
+    const updatedFiles={};
+    Object.entries(files).forEach(([k,v])=>{
+      if(type==="file"){
+        updatedFiles[k===old?np:k]=k===old?{...v,lang:getLang(nn)}:v;
+      } else {
+        updatedFiles[k.startsWith(old+"/")?k.replace(old,np):k]=v;
+      }
+    });
+    setFiles(updatedFiles);
+    setTabs(p=>p.map(t=>t===old?np:t));
+    if(active===old)setActive(np);
+    // Persist rename: delete old, save new keys
+    axios.delete(`/projects/${projectId}/files/${encodeURIComponent(old)}?type=${type}`).catch(console.error);
+    const toSave=Object.entries(updatedFiles).filter(([k])=>type==="file"?k===np:k.startsWith(np+"/"));
+    toSave.forEach(([k,v])=>axios.patch(`/projects/${projectId}/files/${encodeURIComponent(k)}`,{content:v.content,lang:v.lang}).catch(console.error));
     sendMessage("file-renamed",{projectId,oldPath:old,newPath:np,type});
   },[files,active,projectId]);
 
@@ -527,12 +548,27 @@ const Project=()=>{
     await runWebContainerWith(newFiles);
   },[scaffolding,projectId,runWebContainerWith]);
 
-  // ── Right panel drag resize ───────────────────────────────────────────────────
+  // ── Right panel drag resize — works BOTH ways (increase AND decrease) ─────────
   const startRpDrag=useCallback(e=>{
     e.preventDefault();
-    const startX=e.clientX,startW=rpWidth;
-    const onMove=mv=>setRpWidth(Math.max(260,Math.min(700,startW+(startX-mv.clientX))));
-    const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
+    const startX=e.clientX;
+    const startW=rpWidth;
+    // Disable text selection globally during drag so the mouse doesn't get stuck
+    document.body.style.userSelect="none";
+    document.body.style.cursor="col-resize";
+
+    const onMove=mv=>{
+      // Dragging LEFT  → startX > mv.clientX → positive delta → wider panel
+      // Dragging RIGHT → startX < mv.clientX → negative delta → narrower panel
+      const delta=startX-mv.clientX;
+      setRpWidth(Math.max(240,Math.min(Math.floor(window.innerWidth*0.6),startW+delta)));
+    };
+    const onUp=()=>{
+      document.body.style.userSelect="";
+      document.body.style.cursor="";
+      document.removeEventListener("mousemove",onMove);
+      document.removeEventListener("mouseup",onUp);
+    };
     document.addEventListener("mousemove",onMove);
     document.addEventListener("mouseup",onUp);
   },[rpWidth]);
@@ -569,10 +605,27 @@ const Project=()=>{
 
   const onChange=useCallback(v=>{
     if(supRef.current||!active)return;
-    setFiles(p=>({...p,[active]:{...p[active],content:v??""}}));
+    const newContent=v??"";
+    setFiles(p=>({...p,[active]:{...p[active],content:newContent}}));
+
+    // Debounce: save to DB + push to WebContainer FS + broadcast to peers
     clearTimeout(debRef.current);
-    debRef.current=setTimeout(()=>sendMessage("code-change",{projectId,filename:active,code:v??"",language:activeLang}),300);
-  },[active,activeLang,projectId]);
+    debRef.current=setTimeout(()=>{
+      // 1. Persist to backend so file survives refresh
+      axios.patch(`/projects/${projectId}/files/${encodeURIComponent(active)}`,
+        {content:newContent, lang:activeLang}
+      ).catch(console.error);
+
+      // 2. Push into running WebContainer FS so Vite HMR picks it up automatically
+      //    No need to click Run again — Vite watches the FS and hot-reloads
+      if(wc){
+        wc.fs.writeFile(active, newContent).catch(()=>{});
+      }
+
+      // 3. Broadcast code change to other collaborators
+      sendMessage("code-change",{projectId,filename:active,code:newContent,language:activeLang});
+    }, 400);
+  },[active,activeLang,projectId,wc]);
 
   // ── Socket + project load ─────────────────────────────────────────────────────
   useEffect(()=>{
@@ -609,6 +662,8 @@ const Project=()=>{
     receiveMessage("code-update",({filename,code,language})=>{
       if(!filename)return;
       setFiles(p=>({...p,[filename]:{content:code??"",lang:language||getLang(filename)}}));
+      // Push into WebContainer FS so remote collaborators also get live HMR
+      if(wc) wc.fs.writeFile(filename, code??"").catch(()=>{});
       if(edRef.current&&active===filename){
         supRef.current=true;
         const m=edRef.current.getModel();
@@ -631,7 +686,24 @@ const Project=()=>{
       if(proj?.inviteCode)setInviteCode(proj.inviteCode);
       if(proj?.admins)setAdmins(proj.admins.map(a=>(a._id||a).toString()));
       if(proj?.users&&Array.isArray(proj.users))setMembers(proj.users.map(u=>({_id:u._id||u,email:u.email||"",username:u.username||(u.email?.split("@")[0]||"")})));
-      if(proj?.sharedCode&&proj.sharedCode!=="// Start coding here...\n")setFiles(p=>Object.keys(p).length===0?{"main.js":{content:proj.sharedCode,lang:"javascript"}}:p);
+
+      // Load persisted files from DB — this is the single source of truth.
+      // No initial files — only what has been explicitly created and saved.
+      if(proj?.fileTree){
+        const ft=proj.fileTree; // Mongoose Map → plain object via toObject/JSON
+        const entries=Object.entries(typeof ft.toJSON==="function"?ft.toJSON():ft);
+        if(entries.length>0){
+          const loaded={};
+          entries.forEach(([path,f])=>{
+            loaded[path]={content:f.content??"",lang:f.lang||getLang(path)};
+          });
+          setFiles(loaded);
+          // Open first file automatically
+          const firstFile=entries[0][0];
+          setActive(firstFile);
+          setTabs([firstFile]);
+        }
+      }
     }).catch(console.error).finally(()=>mounted&&setLoading(false));
     return()=>{mounted=false;disconnectSocket();};
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -882,12 +954,17 @@ const Project=()=>{
           </div>
         </div>
 
-        {/* ── DRAG RESIZE HANDLE ────────────── */}
+        {/* ── DRAG RESIZE HANDLE — drag left/right to resize the panel ─── */}
         <div
           onMouseDown={startRpDrag}
-          style={{width:4,background:"transparent",cursor:"col-resize",flexShrink:0,position:"relative",zIndex:5}}
-          onMouseEnter={e=>e.currentTarget.style.background=C.accent}
-          onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+          title="Drag to resize"
+          style={{
+            width:5, background:"transparent", cursor:"col-resize",
+            flexShrink:0, position:"relative", zIndex:5,
+            transition:"background 0.15s",
+          }}
+          onMouseEnter={e=>{e.currentTarget.style.background=C.accent;}}
+          onMouseLeave={e=>{e.currentTarget.style.background="transparent";}}
         />
 
         {/* ═══════════════════════════════════════════════════════
