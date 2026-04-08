@@ -1,6 +1,6 @@
 import React from "react";
 import { Route, BrowserRouter, Routes, Navigate } from "react-router-dom";
-import Landing  from "../Screens/Landing";
+import Landing  from "../Screens/landing";
 import Login    from "../Screens/Login";
 import Register from "../Screens/Register";
 import Home     from "../Screens/Home";
