@@ -1,126 +1,67 @@
-import { Router } from "express";
+import { Router }  from "express";
 import { body, param } from "express-validator";
-import * as projectController from "../controllers/Project.controller.js";
-import * as authMiddleware from "../middlewares/auth.middleware.js";
+import * as C from "../controllers/Project.controller.js";
+import * as auth from "../middlewares/auth.middleware.js";
 import { validate } from "../middlewares/validate.middleware.js";
 
 const router = Router();
+const mongoId = (field) => param(field).isMongoId().withMessage(`Invalid ${field}`);
 
-// Create
-router.post(
-  "/create",
-  authMiddleware.authUser,
-  body("name").isString().notEmpty().withMessage("Name is required"),
-  validate,
-  projectController.createProject
-);
+// ── Create ─────────────────────────────────────────────────────────────────
+router.post("/create", auth.authUser,
+  body("name").isString().notEmpty().withMessage("name required"),
+  validate, C.createProject);
 
-// Get all for user
-router.get("/all", authMiddleware.authUser, projectController.getAllProject);
+// ── List all for current user ───────────────────────────────────────────────
+router.get("/all", auth.authUser, C.getAllProject);
 
-// Get single
-router.get(
-  "/get-project/:projectId",
-  authMiddleware.authUser,
-  param("projectId").isMongoId().withMessage("Invalid projectId"),
-  validate,
-  projectController.getProjectById
-);
+// ── Get single project ─────────────────────────────────────────────────────
+router.get("/get-project/:projectId", auth.authUser,
+  mongoId("projectId"), validate, C.getProjectById);
 
-// Delete project (admin only)
-router.delete(
-  "/:projectId",
-  authMiddleware.authUser,
-  param("projectId").isMongoId().withMessage("Invalid projectId"),
-  validate,
-  projectController.deleteProject
-);
+// ── Delete (admin only) ────────────────────────────────────────────────────
+router.delete("/:projectId", auth.authUser,
+  mongoId("projectId"), validate, C.deleteProject);
 
-// Add users
-router.put(
-  "/add-user",
-  authMiddleware.authUser,
-  body("projectId").isString().notEmpty().withMessage("projectId is required"),
-  body("users")
-    .isArray({ min: 1 }).withMessage("users must be a non-empty array")
-    .custom((users) => users.every((u) => typeof u === "string"))
-    .withMessage("Each user must be a string ID"),
-  validate,
-  projectController.addUserProject
-);
+// ── Add users ──────────────────────────────────────────────────────────────
+router.put("/add-user", auth.authUser,
+  body("projectId").notEmpty(),
+  body("users").isArray({ min: 1 }),
+  validate, C.addUserProject);
 
-// Remove member (admin only)
-router.delete(
-  "/:projectId/members/:targetUserId",
-  authMiddleware.authUser,
-  param("projectId").isMongoId().withMessage("Invalid projectId"),
-  param("targetUserId").isMongoId().withMessage("Invalid targetUserId"),
-  validate,
-  projectController.removeMember
-);
+// ── Remove member (admin only) ─────────────────────────────────────────────
+router.delete("/:projectId/members/:targetUserId", auth.authUser,
+  mongoId("projectId"), mongoId("targetUserId"), validate, C.removeMember);
 
-// Exit project (any member)
-router.post(
-  "/:projectId/exit",
-  authMiddleware.authUser,
-  param("projectId").isMongoId().withMessage("Invalid projectId"),
-  validate,
-  projectController.exitProject
-);
+// ── Exit project ────────────────────────────────────────────────────────────
+router.post("/:projectId/exit", auth.authUser,
+  mongoId("projectId"), validate, C.exitProject);
 
-// Promote to admin (admin only)
-router.put(
-  "/:projectId/promote/:targetUserId",
-  authMiddleware.authUser,
-  param("projectId").isMongoId().withMessage("Invalid projectId"),
-  param("targetUserId").isMongoId().withMessage("Invalid targetUserId"),
-  validate,
-  projectController.promoteToAdmin
-);
+// ── Promote to admin ────────────────────────────────────────────────────────
+router.put("/:projectId/promote/:targetUserId", auth.authUser,
+  mongoId("projectId"), mongoId("targetUserId"), validate, C.promoteToAdmin);
 
-// Join via invite code
-router.post(
-  "/join",
-  authMiddleware.authUser,
-  body("inviteCode").isString().notEmpty().withMessage("inviteCode is required"),
-  validate,
-  projectController.joinProjectByCode
-);
+// ── Join via invite code ────────────────────────────────────────────────────
+router.post("/join", auth.authUser,
+  body("inviteCode").notEmpty().withMessage("inviteCode required"),
+  validate, C.joinProjectByCode);
 
-// Regenerate invite code
-router.post(
-  "/regenerate-invite/:projectId",
-  authMiddleware.authUser,
-  param("projectId").isMongoId().withMessage("Invalid projectId"),
-  validate,
-  projectController.regenerateInviteCode
-);
+// ── Regenerate invite code ──────────────────────────────────────────────────
+router.post("/regenerate-invite/:projectId", auth.authUser,
+  mongoId("projectId"), validate, C.regenerateInviteCode);
+
+// ── FILE TREE PERSISTENCE ───────────────────────────────────────────────────
+// PUT   /:projectId/files            → replace entire tree
+// PATCH /:projectId/files/:path      → upsert one file
+// DELETE/:projectId/files/:path      → delete file or dir
+
+router.put("/:projectId/files", auth.authUser,
+  mongoId("projectId"), validate, C.saveFileTree);
+
+router.patch("/:projectId/files/:encodedPath", auth.authUser,
+  mongoId("projectId"), validate, C.saveOneFile);
+
+router.delete("/:projectId/files/:encodedPath", auth.authUser,
+  mongoId("projectId"), validate, C.deleteFileFromTree);
 
 export default router;
-
-// File tree persistence
-import { saveFileTree, saveOneFile, deleteFileFromTree } from "../controllers/Project.controller.js";
-
-router.put(
-  "/:projectId/files",
-  authMiddleware.authUser,
-  param("projectId").isMongoId().withMessage("Invalid projectId"),
-  validate,
-  saveFileTree
-);
-
-router.patch(
-  "/:projectId/files/:encodedPath",
-  authMiddleware.authUser,
-  param("projectId").isMongoId().withMessage("Invalid projectId"),
-  validate,
-  saveOneFile
-);
-
-router.delete(
-  "/:projectId/files/:encodedPath",
-  authMiddleware.authUser,
-  param("projectId").isMongoId().withMessage("Invalid projectId"),
-  validate,
-  deleteFileFromTree
-);

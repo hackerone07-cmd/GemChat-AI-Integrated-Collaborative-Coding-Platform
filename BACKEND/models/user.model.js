@@ -1,41 +1,30 @@
 import mongoose from "mongoose";
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
+import bcrypt   from "bcrypt";
+import jwt      from "jsonwebtoken";
 
 const userSchema = new mongoose.Schema(
   {
     email: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-      lowercase: true,
-      minLength: [6, "Email must be at least 6 characters long"],
+      type: String, required: true, unique: true, trim: true, lowercase: true,
+      minLength: [6,  "Email must be at least 6 characters long"],
       maxLength: [50, "Email must be at most 50 characters long"],
     },
-
-    // Display name — optional at register, changeable any time
     username: {
-      type: String,
-      trim: true,
+      type: String, trim: true,
       minLength: [2, "Username must be at least 2 characters"],
       maxLength: [30, "Username must be at most 30 characters"],
       default: "",
     },
-
     password: {
-      type: String,
-      required: [true, "Password is required"],
-      select: false,
+      type: String, required: [true, "Password is required"], select: false,
     },
   },
   { timestamps: true }
 );
 
-// Hash password on save
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
-  this.password = await bcrypt.hash(this.password, 12);
+  this.password = await bcrypt.hash(this.password, 10);
   next();
 });
 
@@ -43,12 +32,9 @@ userSchema.methods.isValidPassword = async function (password) {
   return bcrypt.compare(password, this.password);
 };
 
-// Fallback display name: username or email prefix
-userSchema.methods.displayName = function () {
-  return this.username || this.email.split("@")[0];
-};
-
-// JWT carries _id + email + username — socket auth needs all three
+// ── JWT carries _id + email + username ───────────────────────────────────────
+// BUG FIX: old version only had { email }, so req.user._id was always
+// undefined in every controller → findById(undefined) → CastError → 500/403.
 userSchema.methods.generateJWT = function () {
   return jwt.sign(
     {
@@ -61,5 +47,4 @@ userSchema.methods.generateJWT = function () {
   );
 };
 
-const User = mongoose.model("User", userSchema);
-export default User;
+export default mongoose.model("User", userSchema);

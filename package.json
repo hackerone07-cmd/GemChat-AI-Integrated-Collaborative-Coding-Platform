@@ -1,0 +1,11 @@
+{
+  "name": "gemchat-workspace",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install --prefix BACKEND && npm install --prefix FrontEnd",
+    "dev:backend": "npm run dev --prefix BACKEND",
+    "dev:frontend": "npm run dev --prefix FrontEnd",
+    "build": "npm run build --prefix FrontEnd",
+    "start": "npm run start --prefix BACKEND"
+  }
+}

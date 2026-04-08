@@ -1,180 +1,218 @@
+# GemChat
 
-# **GemChat — AI-Integrated Collaborative Chat Platform**
+GemChat is a full-stack collaborative coding workspace with:
 
-GemChat is a full-stack, AI-powered collaborative chat platform designed for group-based study environments, technical discussions, and real-time problem solving. Users can chat with each other while interacting with Google Gemini inside the same conversation. The platform also includes an integrated browser-based code execution sandbox that lets users write, edit, and run AI-generated code snippets directly within the chat.
+- project chat with persistent messages
+- persistent file tree stored in MongoDB
+- AI-assisted chat and code generation
+- Monaco editor, live collaboration, and WebContainer preview
 
-GemChat combines real-time communication, intelligent AI assistance, and executable code blocks to create a seamless collaborative experience for learners and developers.
+## Stack
 
----
+- Frontend: React + Vite
+- Backend: Node.js + Express + Socket.IO
+- Database: MongoDB + Mongoose
+- AI: Google Gemini
 
-## 🚀 **Features**
+## Project Structure
 
-### ✅ **Real-Time Messaging**
-
-* Instant messaging powered by WebSockets
-* Typing indicators, message delivery status, and live chat updates
-* Group chat rooms for study groups or team collaborations
-
-### ✅ **AI Assistance via Google Gemini**
-
-* Ask coding, study, or topic-specific questions directly in chat
-* AI-generated explanations, summaries, and problem-solving help
-* AI-assisted debugging and code snippet generation
-
-### ✅ **Built-in Code Execution Engine**
-
-* Write, edit, and run code inside chat
-* Safe and sandboxed execution environment
-* Supports multiple languages (depending on your implementation)
-* AI-generated code can be executed immediately for testing
-
-### ✅ **Collaboration Tools**
-
-* Share code blocks, messages, and problem statements
-* AI can analyze previous messages for context
-* Students can collaborate on tasks in real time
-
-### ✅ **User Management**
-
-* Secure authentication
-* User profiles
-* Role-based access (Admin, Member, Guest)
-
----
-
-## 🛠️ **Tech Stack**
-
-### **Frontend**
-
-* React / Next.js (or your actual frontend)
-* WebSocket-based real-time messaging
-* Integrated code editor (Monaco Editor / CodeMirror)
-* Syntax highlighting
-* Responsive UI
-
-### **Backend**
-
-* Node.js
-* Express.js
-* Socket.io for real-time communication
-* Execution Sandbox (VM2 / Docker / isolated VM)
-* Google Gemini API integration
-
-### **Database**
-
-* MongoDB
-* Mongoose ORM
-
-### **Other Tools**
-
-* JWT / Sessions for authentication
-* Cloud-based storage for logs or execution output
-* GitHub for version control
-
----
-
-## 🔧 **Installation & Setup**
-
-### **1. Clone the repository**
-
-```bash
-git clone https://github.com/your-username/GemChat.git
-cd GemChat
+```text
+SOEN/
+├─ BACKEND/
+├─ FrontEnd/
+├─ package.json
+└─ readme.md
 ```
 
-### **2. Install dependencies**
+## Environment Variables
+
+Backend: create `BACKEND/.env`
+
+```env
+PORT=3000
+MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/gemchat
+JWT_SECRET=replace_with_a_long_random_secret
+GOOGLE_API_KEY=your_google_gemini_api_key
+CLIENT_URL=http://localhost:5173
+TRUST_PROXY=false
+```
+
+Frontend: create `FrontEnd/.env`
+
+```env
+VITE_API_URL=http://localhost:3000
+```
+
+Templates are included in:
+
+- `BACKEND/.env.example`
+- `FrontEnd/.env.example`
+
+## Local Development
+
+Install everything:
+
+```bash
+npm run install:all
+```
+
+Run backend:
+
+```bash
+npm run dev:backend
+```
+
+Run frontend:
+
+```bash
+npm run dev:frontend
+```
+
+Frontend:
+
+```text
+http://localhost:5173
+```
+
+Backend health check:
+
+```text
+http://localhost:3000/health
+```
+
+## Production Build
+
+Build frontend:
+
+```bash
+npm run build
+```
+
+Run backend in production:
+
+```bash
+npm run start
+```
+
+## Deployment
+
+Recommended setup:
+
+1. Deploy `BACKEND` to Render, Railway, or a VPS.
+2. Deploy `FrontEnd` to Vercel or Netlify.
+3. Point frontend `VITE_API_URL` to the deployed backend URL.
+4. Set backend `CLIENT_URL` to the deployed frontend URL.
+
+Included deploy config files:
+
+- `render.yaml` for Render blueprint deploy
+- `FrontEnd/vercel.json` for Vercel
+- `FrontEnd/netlify.toml` for Netlify
+
+### Backend Deployment Steps
+
+Use `BACKEND` as the service root.
+
+Build command:
 
 ```bash
 npm install
 ```
 
-### **3. Create a `.env` file**
-
-Add variables based on your backend architecture:
-
-```
-MONGO_URL=your_mongodb_connection
-JWT_SECRET=your_secret
-GEMINI_API_KEY=your_google_gemini_api_key
-SANDBOX_SECRET=your_sandbox_key
-```
-
-### **4. Run the development server**
+Start command:
 
 ```bash
-npm run dev
+npm start
 ```
 
-GemChat will run at:
+Required backend env vars:
 
+- `PORT`
+- `MONGO_URI`
+- `JWT_SECRET`
+- `GOOGLE_API_KEY`
+- `CLIENT_URL`
+- `TRUST_PROXY=true` on Render/Railway/reverse-proxy platforms
+
+After deploy, verify:
+
+- `GET /health` returns `200`
+- Socket connection works from the frontend
+- MongoDB allows connections from your backend host
+
+### One-Click Render Deploy
+
+This repo now includes `render.yaml`.
+
+Steps:
+
+1. Push the repo to GitHub.
+2. In Render, choose `New +` → `Blueprint`.
+3. Select your GitHub repo.
+4. Render will detect `render.yaml` and create:
+   - `gemchat-backend`
+   - `gemchat-frontend`
+5. Fill in the unsynced env vars:
+   - `MONGO_URI`
+   - `JWT_SECRET`
+   - `GOOGLE_API_KEY`
+   - `CLIENT_URL`
+   - `VITE_API_URL`
+6. Set:
+   - backend `CLIENT_URL` = frontend Render URL
+   - frontend `VITE_API_URL` = backend Render URL
+7. Deploy both services.
+
+### Frontend Deployment Steps
+
+Use `FrontEnd` as the project root.
+
+Build command:
+
+```bash
+npm install && npm run build
 ```
-http://localhost:3000/
+
+Output directory:
+
+```text
+dist
 ```
 
----
+Required frontend env vars:
 
-## 📁 **Project Structure**
+- `VITE_API_URL=https://your-backend-domain.com`
 
-```
-GemChat/
-│── client/                # Frontend
-│── server/                # Backend
-│   ├── controllers/
-│   ├── routes/
-│   ├── models/
-│   ├── socket/
-│   ├── sandbox/
-│── shared/
-│── package.json
-```
+`FrontEnd/vercel.json` already contains SPA rewrites and the required COOP/COEP headers for WebContainer support.
 
----
+### Netlify Frontend Deploy
 
-## ✅ **Core Components Explained**
+`FrontEnd/netlify.toml` is included.
 
-### **💬 Real-Time Chat Engine**
+Use:
 
-* Built using Socket.io
-* Handles rooms, user joins, disconnects
-* Supports group collaboration
+- Base directory: `FrontEnd`
+- Build command: `npm install && npm run build`
+- Publish directory: `dist`
+- Env var: `VITE_API_URL=https://your-backend-domain.com`
 
-### **🤖 AI Assistant (Google Gemini)**
+## Deploy Checklist
 
-* Integrated directly in chat
-* Uses context window from conversation history
-* Helpful for code explanation, debugging, summaries, etc.
+- Create MongoDB Atlas database
+- Add backend environment variables
+- Add frontend environment variables
+- Set backend `CLIENT_URL` to the exact frontend domain
+- Set frontend `VITE_API_URL` to the exact backend domain
+- Enable `TRUST_PROXY=true` if backend is behind Render/Railway/Nginx
+- Test `/health`
+- Open one project and verify:
+  - files persist after refresh
+  - chat persists after refresh
+  - AI replies work
+  - React preview loads
 
-### **💻 Code Execution Sandbox**
+## Notes
 
-* Secure environment to run user and AI-generated code
-* Prevents unauthorized access and system-level commands
-* Returns output, errors, logs back into the chat
-
-### **👥 Collaboration & Group Features**
-
-* Shared chat rooms
-* AI assistance per-group
-* Shared code snippets
-
----
-
-## ✅ **Future Enhancements**
-
-* Real-time collaborative code editing (Google Docs style)
-* Voice-based AI assistance
-* File uploads for AI summarization
-* Multi-language code execution
-* AI explanation mode for every code run
-
----
-
-## 🤝 **Contributing**
-
-Contributions are welcome!
-Open an issue or submit a pull request.
-
----
-
-## 📄 **License**
-
-
+- File contents and chat messages are persisted in MongoDB.
+- Backend now exposes `/health` for deployment checks.
+- For best production stability, use Node 18+.

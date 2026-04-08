@@ -255,13 +255,49 @@ const AvStack=({users})=>(
   </div>
 );
 
+// ─── Unique ID counter ───────────────────────────────────────────────────────
+// Date.now() + Math.random() can collide when called in the same ms.
+// A module-level counter guarantees uniqueness within the session.
+let _uid = 0;
+const uid = () => `${Date.now()}_${++_uid}`;
+
+const normalizeStoredFiles = (rawTree = {}) => {
+  const loaded = {};
+  Object.entries(rawTree)
+    .filter(([, value]) => value && typeof value === "object")
+    .forEach(([path, value]) => {
+      loaded[path] = {
+        content: value.content ?? "",
+        lang: value.lang || getLang(path),
+      };
+    });
+  return loaded;
+};
+
+const normalizeStoredMessages = (messages = [], myEmail = "") =>
+  (Array.isArray(messages) ? messages : []).map((m) => ({
+    id: m._id || `${m.sender || "user"}_${m.timestamp || uid()}_${uid()}`,
+    sender: m.sender,
+    senderUsername: m.senderUsername || m.sender,
+    message: m.message,
+    timestamp: m.timestamp,
+    isAI: m.isAI,
+    dir: m.sender === myEmail ? "out" : "in",
+    read: m.sender === myEmail,
+  }));
+
+const PROJECT_CACHE_KEY = "activeProject";
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Main component
 // ═══════════════════════════════════════════════════════════════════════════════
 const Project=()=>{
   const location=useLocation();const navigate=useNavigate();
-  const projectId=location.state?.project?._id??location.state?.projectId;
-  const projectName=location.state?.project?.name??"untitled";
+  const cachedProject=(()=>{
+    try{return JSON.parse(localStorage.getItem(PROJECT_CACHE_KEY) || "null");}catch{return null;}
+  })();
+  const projectId=location.state?.project?._id??location.state?.projectId??cachedProject?._id??cachedProject?.projectId;
+  const [projectName,setProjectName]=useState(location.state?.project?.name??cachedProject?.name??"untitled");
 
   const {user}=useContext(UserContext);
   const [cu]=useState(()=>{try{return JSON.parse(localStorage.getItem("user"))??null;}catch{return null;}});
@@ -325,11 +361,36 @@ const Project=()=>{
   const [previewSrc,setPreviewSrc]=useState(null);
   const [scaffolding,setScaffolding]=useState(false);
 
+  // Refs so async WebContainer callbacks always read the latest values
+  // without needing to be in useCallback dependency arrays
+  const filesRef     = useRef({});      // always mirrors files state
+  const wcMountedRef = useRef(false);   // true once mount() has succeeded
+  const serverReadyOff = useRef(null);  // cleanup fn for server-ready listener
+
+  // Keep filesRef in sync with files state
+  useEffect(()=>{ filesRef.current = files; }, [files]);
+
+  const saveWholeTree = useCallback(async (tree) => {
+    if(!projectId)return;
+    await axios.put(`/projects/${projectId}/files`,{fileTree:tree});
+  },[projectId]);
+
+  useEffect(()=>{
+    if(location.state?.project?._id){
+      try{
+        localStorage.setItem(PROJECT_CACHE_KEY,JSON.stringify({
+          _id: location.state.project._id,
+          name: location.state.project.name ?? "untitled",
+        }));
+      }catch{}
+    }
+  },[location.state]);
+
   // ── Search ───────────────────────────────────────────────────────────────────
   const [sq,setSq]=useState("");
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
-  const addLine=useCallback((t,type="output")=>setLines(p=>[...p,{t:String(t),type,id:Date.now()+Math.random()}]),[]);
+  const addLine=useCallback((t,type="output")=>setLines(p=>[...p,{t:String(t),type,id:uid()}]),[]);
   const clrLines=()=>setLines([]);
   const lc=t=>({command:"#f0c040",error:C.red,success:C.green,info:"#89dceb",warning:C.yellow}[t]||"#ccc");
 
@@ -457,10 +518,25 @@ const Project=()=>{
   };
 
   // ── Run React project in WebContainer → live preview in Browser tab ───────────
-  // Only used for React/web projects (has package.json). All other languages
-  // go through Wandbox in the Console tab — no WebContainer terminal needed.
+  // FIXES:
+  // 1. Uses filesRef.current instead of files state → no longer in useCallback deps
+  //    → function is NEVER recreated on every keystroke (was the npm-install loop cause)
+  // 2. Removes old server-ready listener before adding new one → no duplicate listeners
+  // 3. wcMountedRef tracks whether FS is ready for writeFile calls
   const runWebContainerWith = useCallback(async (fileMap) => {
+    // Kill any running process first
+    if (shellRef.current) {
+      try { await shellRef.current.kill(); } catch {}
+      shellRef.current = null;
+    }
+    // Remove any previous server-ready listener
+    if (serverReadyOff.current) {
+      try { serverReadyOff.current(); } catch {}
+      serverReadyOff.current = null;
+    }
+
     setRunning(true);
+    wcMountedRef.current = false;
     clrLines(); setRpTab("console");
     addLine("⏳  Booting WebContainer (first load ~5s)...", "info");
 
@@ -469,44 +545,61 @@ const Project=()=>{
       instance = await getWebcontainer();
       setWc(instance);
     } catch (e) {
-      addLine(`✗  WebContainer failed to boot: ${e.message}`, "error");
-      addLine("   Ensure COOP/COEP headers are set (see vite.config.js).", "warning");
+      addLine(`✗  WebContainer boot failed: ${e.message}`, "error");
+      addLine("   COOP/COEP headers required — check vite.config.js", "warning");
       setRunning(false); return;
     }
 
     try {
-      const src = fileMap || files;
-      // ↓↓ THE FIX: build nested tree, not flat paths
+      // Use explicitly passed fileMap, OR fall back to the ref (always latest)
+      const src = fileMap ?? filesRef.current;
       const mountTree = toWcTree(src);
       await instance.mount(mountTree);
+      wcMountedRef.current = true;   // FS is live — onChange can now writeFile
 
       addLine("📦  npm install...", "info");
-      if (shellRef.current) { try { await shellRef.current.kill(); } catch { } shellRef.current = null; }
 
       const ip = await instance.spawn("npm", ["install"]);
-      ip.output.pipeTo(new WritableStream({ write(d) { const t = d.trim(); if (t) addLine(t, "output"); } }));
+      ip.output.pipeTo(new WritableStream({
+        write(chunk) {
+          // Use queueMicrotask so React state updates don't block the stream
+          const line = String(chunk).trim();
+          if (line) queueMicrotask(() => addLine(line, "output"));
+        },
+      }));
       const installExit = await ip.exit;
-      if (installExit !== 0) { addLine("✗  npm install failed", "error"); setRunning(false); return; }
+      if (installExit !== 0) {
+        addLine("✗  npm install failed — check package.json", "error");
+        setRunning(false); return;
+      }
 
       addLine("✓  Dependencies installed", "success");
       addLine("🚀  Starting Vite dev server...", "info");
 
       const sp = await instance.spawn("npm", ["run", "dev"]);
       shellRef.current = sp;
-      sp.output.pipeTo(new WritableStream({ write(d) { const t = d.trim(); if (t) addLine(t, "output"); } }));
+      sp.output.pipeTo(new WritableStream({
+        write(chunk) {
+          const line = String(chunk).trim();
+          if (line) queueMicrotask(() => addLine(line, "output"));
+        },
+      }));
 
-      // server-ready → auto-switch to Browser tab
-      instance.on("server-ready", (_port, url) => {
+      // Register server-ready ONCE — store the off() so we can remove it next run
+      const handler = (_port, url) => {
         addLine(`✓  Server ready → ${url}`, "success");
         setPreviewSrc(url);
         setPreviewUrl(url);
         setRpTab("browser");
         setRunning(false);
-      });
+      };
+      instance.on("server-ready", handler);
+      serverReadyOff.current = () => instance.off?.("server-ready", handler);
 
+      // If the dev server exits unexpectedly
       sp.exit.then(code => {
         if (code != null) {
-          addLine(code === 0 ? "  ✓ process exited" : `  ✗ process exited ${code}`, code === 0 ? "success" : "error");
+          addLine(code === 0 ? "  ✓ process exited" : `  ✗ process exited with code ${code}`, code === 0 ? "success" : "error");
           setRunning(false);
         }
       });
@@ -514,8 +607,8 @@ const Project=()=>{
       addLine(`✗  ${e.message}`, "error");
       setRunning(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, addLine]);
+  // Only addLine — no files/wc state in deps. filesRef always has latest files.
+  }, [addLine]);
 
   // ── Kill the running WebContainer process (dev server) ────────────────────────
   const killProcess = useCallback(async () => {
@@ -528,40 +621,59 @@ const Project=()=>{
   }, [addLine]);
   // ── One-click React scaffold ──────────────────────────────────────────────────
   const scaffoldReact=useCallback(async()=>{
-    if(scaffolding)return;
+    if(scaffolding||running)return;   // guard — prevent double-click spawning two npm installs
     setScaffolding(true);
     clrLines();setRpTab("console");
     addLine("⚛  Setting up React + Vite project...","info");
+
     const newFiles={};
     Object.entries(REACT_SCAFFOLD).forEach(([path,f])=>{
       newFiles[path]={content:f.content,lang:f.lang};
-      sendMessage("file-created",{projectId,path,content:f.content,lang:f.lang});
     });
+
+    // 1. Update local state so editor shows files immediately
     setFiles(p=>({...p,...newFiles}));
     setActive("src/App.jsx");
-    setTabs(["src/App.jsx","src/main.jsx","package.json"]);
-    addLine("✓  Project files created","success");
+    setTabs(["src/App.jsx","src/main.jsx","src/App.css","index.html","package.json"]);
+
+    // 2. Persist ALL files to DB in one request → survive page refresh
+    try{
+      await axios.put(`/projects/${projectId}/files`,{fileTree:newFiles});
+      addLine("✓  Files saved to database","success");
+    }catch(e){
+      addLine("⚠  DB save failed — files exist this session only","warning");
+      console.error("scaffold save:",e);
+    }
+
+    // 3. Broadcast to collaborators
+    Object.entries(newFiles).forEach(([path,f])=>{
+      sendMessage("file-created",{projectId,path,content:f.content,lang:f.lang});
+    });
+
     addLine("   src/App.jsx  src/main.jsx  package.json","output");
     addLine("   index.html   vite.config.js  src/App.css","output");
     addLine("","output");
-    setScaffolding(false);
-    await runWebContainerWith(newFiles);
-  },[scaffolding,projectId,runWebContainerWith]);
+
+    // 4. Boot WebContainer → live preview
+    //    setScaffolding(false) in finally so button stays disabled the whole time
+    //    Prevents double-click opening two parallel npm install processes
+    try{
+      await runWebContainerWith(newFiles);
+    }finally{
+      setScaffolding(false);
+    }
+  },[scaffolding,running,projectId,runWebContainerWith,clrLines,addLine]);
 
   // ── Right panel drag resize — works BOTH ways (increase AND decrease) ─────────
   const startRpDrag=useCallback(e=>{
     e.preventDefault();
-    const startX=e.clientX;
-    const startW=rpWidth;
     // Disable text selection globally during drag so the mouse doesn't get stuck
     document.body.style.userSelect="none";
     document.body.style.cursor="col-resize";
 
     const onMove=mv=>{
-      // Dragging LEFT  → startX > mv.clientX → positive delta → wider panel
-      // Dragging RIGHT → startX < mv.clientX → negative delta → narrower panel
-      const delta=startX-mv.clientX;
-      setRpWidth(Math.max(240,Math.min(Math.floor(window.innerWidth*0.6),startW+delta)));
+      const nextWidth = window.innerWidth - mv.clientX;
+      setRpWidth(Math.max(240,Math.min(Math.floor(window.innerWidth*0.6),nextWidth)));
     };
     const onUp=()=>{
       document.body.style.userSelect="";
@@ -571,7 +683,7 @@ const Project=()=>{
     };
     document.addEventListener("mousemove",onMove);
     document.addEventListener("mouseup",onUp);
-  },[rpWidth]);
+  },[]);
 
   // ── Cursor decorations ────────────────────────────────────────────────────────
   const updateDecs=useCallback(()=>{
@@ -607,25 +719,49 @@ const Project=()=>{
     if(supRef.current||!active)return;
     const newContent=v??"";
     setFiles(p=>({...p,[active]:{...p[active],content:newContent}}));
-
-    // Debounce: save to DB + push to WebContainer FS + broadcast to peers
     clearTimeout(debRef.current);
     debRef.current=setTimeout(()=>{
-      // 1. Persist to backend so file survives refresh
+      // 1. Persist to DB
       axios.patch(`/projects/${projectId}/files/${encodeURIComponent(active)}`,
-        {content:newContent, lang:activeLang}
-      ).catch(console.error);
-
-      // 2. Push into running WebContainer FS so Vite HMR picks it up automatically
-      //    No need to click Run again — Vite watches the FS and hot-reloads
-      if(wc){
-        wc.fs.writeFile(active, newContent).catch(()=>{});
+        {content:newContent,lang:activeLang}).catch(console.error);
+      // 2. Push to WebContainer FS → Vite HMR auto-reloads
+      //    ONLY when mount() has already completed — wcMountedRef guards this.
+      //    Calling getWebcontainer() before mount boots the container prematurely
+      //    and fs.writeFile on an unmounted FS throws silently-corrupting errors.
+      if(wcMountedRef.current){
+        getWebcontainer().then(inst=>
+          inst.fs.writeFile(active,newContent).catch(()=>{})
+        ).catch(()=>{});
       }
-
-      // 3. Broadcast code change to other collaborators
+      // 3. Broadcast to collaborators
       sendMessage("code-change",{projectId,filename:active,code:newContent,language:activeLang});
-    }, 400);
-  },[active,activeLang,projectId,wc]);
+    },400);
+  },[active,activeLang,projectId]);
+
+  useEffect(()=>{
+    if(!projectId){
+      navigate("/dashboard");
+    }
+  },[projectId,navigate]);
+
+  useEffect(()=>{
+    if(!projectId)return;
+    const flushPendingFileTree=()=>{
+      if(debRef.current){
+        clearTimeout(debRef.current);
+        debRef.current=null;
+      }
+      if(Object.keys(filesRef.current).length===0)return;
+      saveWholeTree(filesRef.current).catch(console.error);
+    };
+    window.addEventListener("beforeunload",flushPendingFileTree);
+    window.addEventListener("pagehide",flushPendingFileTree);
+    return()=>{
+      window.removeEventListener("beforeunload",flushPendingFileTree);
+      window.removeEventListener("pagehide",flushPendingFileTree);
+      flushPendingFileTree();
+    };
+  },[projectId,saveWholeTree]);
 
   // ── Socket + project load ─────────────────────────────────────────────────────
   useEffect(()=>{
@@ -635,11 +771,11 @@ const Project=()=>{
 
     receiveMessage("message-history",h=>{
       if(!Array.isArray(h))return;
-      setMsgs(h.map(m=>({id:m._id||Date.now()+Math.random(),sender:m.sender,senderUsername:m.senderUsername||m.sender,message:m.message,timestamp:m.timestamp,isAI:m.isAI,dir:m.sender===myEmail?"out":"in",read:m.sender===myEmail})));
+      setMsgs(normalizeStoredMessages(h,myEmail));
     });
     receiveMessage("project-message",d=>{
       const isOut=d.sender===myEmail;
-      setMsgs(p=>[...p,{...d,senderUsername:d.senderUsername||d.sender,dir:isOut?"out":"in",id:Date.now()+Math.random(),read:isOut}]);
+      setMsgs(p=>[...p,{...d,senderUsername:d.senderUsername||d.sender,dir:isOut?"out":"in",id:uid(),read:isOut}]);
       // Only increment unread if chat tab is NOT active and message is incoming
       if(!isOut){
         setUnreadCount(c=>{
@@ -662,8 +798,10 @@ const Project=()=>{
     receiveMessage("code-update",({filename,code,language})=>{
       if(!filename)return;
       setFiles(p=>({...p,[filename]:{content:code??"",lang:language||getLang(filename)}}));
-      // Push into WebContainer FS so remote collaborators also get live HMR
-      if(wc) wc.fs.writeFile(filename, code??"").catch(()=>{});
+      // Only write to WC filesystem if it's actually mounted
+      if(wcMountedRef.current){
+        getWebcontainer().then(inst=>inst.fs.writeFile(filename,code??"").catch(()=>{})).catch(()=>{});
+      }
       if(edRef.current&&active===filename){
         supRef.current=true;
         const m=edRef.current.getModel();
@@ -683,26 +821,18 @@ const Project=()=>{
     axios.get(`/projects/get-project/${projectId}`).then(r=>{
       if(!mounted)return;
       const proj=r.data?.project;
+      if(proj?.name)setProjectName(proj.name);
       if(proj?.inviteCode)setInviteCode(proj.inviteCode);
       if(proj?.admins)setAdmins(proj.admins.map(a=>(a._id||a).toString()));
       if(proj?.users&&Array.isArray(proj.users))setMembers(proj.users.map(u=>({_id:u._id||u,email:u.email||"",username:u.username||(u.email?.split("@")[0]||"")})));
+      if(Array.isArray(proj?.messages))setMsgs(normalizeStoredMessages(proj.messages,myEmail));
 
-      // Load persisted files from DB — this is the single source of truth.
-      // No initial files — only what has been explicitly created and saved.
-      if(proj?.fileTree){
-        const ft=proj.fileTree; // Mongoose Map → plain object via toObject/JSON
-        const entries=Object.entries(typeof ft.toJSON==="function"?ft.toJSON():ft);
-        if(entries.length>0){
-          const loaded={};
-          entries.forEach(([path,f])=>{
-            loaded[path]={content:f.content??"",lang:f.lang||getLang(path)};
-          });
-          setFiles(loaded);
-          // Open first file automatically
-          const firstFile=entries[0][0];
-          setActive(firstFile);
-          setTabs([firstFile]);
-        }
+      const loaded = normalizeStoredFiles(proj?.fileTree);
+      const sortedPaths = Object.keys(loaded).sort();
+      if (sortedPaths.length > 0) {
+        setFiles(loaded);
+        setTabs(sortedPaths);
+        setActive(sortedPaths[0]);
       }
     }).catch(console.error).finally(()=>mounted&&setLoading(false));
     return()=>{mounted=false;disconnectSocket();};
@@ -717,7 +847,7 @@ const Project=()=>{
     if(!chatInput.trim())return;
     const p={message:chatInput.trim(),sender:myEmail,senderUsername:myUsername,timestamp:new Date().toISOString()};
     sendMessage("project-message",p);
-    setMsgs(pr=>[...pr,{...p,dir:"out",id:Date.now()+Math.random(),read:true}]);
+    setMsgs(pr=>[...pr,{...p,dir:"out",id:uid(),read:true}]);
     setChatInput("");
   };
 

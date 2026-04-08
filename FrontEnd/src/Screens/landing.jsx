@@ -1,632 +1,424 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-/* ─── Animated code rain canvas ─────────────────────────────────────────── */
-const CodeRain = () => {
-  const canvasRef = useRef(null);
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    let animId;
+/* ─── Google Fonts + Global styles ────────────────────────────────────────── */
+const FONTS = `
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
 
-    const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
-    };
-    resize();
-    window.addEventListener("resize", resize);
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: #05060f;
+    color: #e2e4f0;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  ::selection { background: rgba(99,102,241,0.35); color: #fff; }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: #05060f; }
+  ::-webkit-scrollbar-thumb { background: #1e2040; border-radius: 3px; }
 
-    const chars = "01アイウエオカキクケコサシスセソ{}[]()<>=+-*/;:,.!?#@$%^&~|`".split("");
-    const cols  = Math.floor(canvas.width / 16);
-    const drops = Array(cols).fill(1);
+  @keyframes fadeUp   { from{opacity:0;transform:translateY(28px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes fadeIn   { from{opacity:0} to{opacity:1} }
+  @keyframes float    { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+  @keyframes gradShift{ 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+  @keyframes blink    { 0%,100%{opacity:1} 50%{opacity:0} }
+  @keyframes marquee  { from{transform:translateX(0)} to{transform:translateX(-50%)} }
 
-    const draw = () => {
-      ctx.fillStyle = "rgba(3,7,18,0.05)";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.font = "13px 'Fira Code', monospace";
-      drops.forEach((y, i) => {
-        const char  = chars[Math.floor(Math.random() * chars.length)];
-        const alpha = Math.random();
-        if (alpha > 0.92) ctx.fillStyle = "#ffffff";
-        else if (alpha > 0.7) ctx.fillStyle = "#3b82f6";
-        else ctx.fillStyle = `rgba(99,102,241,${0.15 + alpha * 0.25})`;
-        ctx.fillText(char, i * 16, y * 16);
-        if (y * 16 > canvas.height && Math.random() > 0.975) drops[i] = 0;
-        drops[i]++;
-      });
-      animId = requestAnimationFrame(draw);
-    };
-    draw();
-    return () => {
-      cancelAnimationFrame(animId);
-      window.removeEventListener("resize", resize);
-    };
-  }, []);
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        position: "absolute", inset: 0,
-        width: "100%", height: "100%",
-        opacity: 0.35, pointerEvents: "none",
-      }}
-    />
-  );
-};
+  .anim-fadeup { animation: fadeUp 0.7s cubic-bezier(.22,1,.36,1) both; }
+  .anim-fadein { animation: fadeIn 0.6s ease both; }
+  .anim-float  { animation: float 5s ease-in-out infinite; }
 
-/* ─── Feature card ───────────────────────────────────────────────────────── */
-const FeatureCard = ({ icon, title, desc, delay }) => (
-  <div
-    style={{
-      animationDelay: `${delay}ms`,
-      background: "linear-gradient(135deg,rgba(30,41,59,0.9),rgba(15,23,42,0.95))",
-      border: "1px solid rgba(99,102,241,0.25)",
-      borderRadius: "16px",
-      padding: "28px",
-      transition: "transform 0.25s, box-shadow 0.25s, border-color 0.25s",
-    }}
-    className="group hover:-translate-y-1"
-    onMouseEnter={(e) => {
-      e.currentTarget.style.borderColor = "rgba(99,102,241,0.6)";
-      e.currentTarget.style.boxShadow   = "0 0 32px rgba(99,102,241,0.15)";
-    }}
-    onMouseLeave={(e) => {
-      e.currentTarget.style.borderColor = "rgba(99,102,241,0.25)";
-      e.currentTarget.style.boxShadow   = "none";
-    }}
-  >
-    <div style={{
-      width: 48, height: 48, borderRadius: 12,
-      background: "linear-gradient(135deg,#4f46e5,#7c3aed)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      fontSize: 22, marginBottom: 16,
-      boxShadow: "0 0 20px rgba(99,102,241,0.4)",
-    }}>
-      {icon}
-    </div>
-    <h3 style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 17, marginBottom: 8 }}>
-      {title}
-    </h3>
-    <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.7 }}>{desc}</p>
-  </div>
-);
+  .nav-link {
+    position:relative; color:#94a0c4; text-decoration:none;
+    font-size:14px; font-weight:500; transition:color 0.2s; cursor:pointer;
+  }
+  .nav-link::after {
+    content:''; position:absolute; bottom:-2px; left:0;
+    width:0; height:1px; background:#6366f1;
+    transition:width 0.25s cubic-bezier(.22,1,.36,1);
+  }
+  .nav-link:hover { color:#e2e4f0; }
+  .nav-link:hover::after { width:100%; }
 
-/* ─── Step card ──────────────────────────────────────────────────────────── */
-const StepCard = ({ num, title, desc }) => (
-  <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
-    <div style={{
-      width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
-      background: "linear-gradient(135deg,#4f46e5,#7c3aed)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      color: "white", fontWeight: 800, fontSize: 15,
-      boxShadow: "0 0 20px rgba(99,102,241,0.35)",
-    }}>
-      {num}
-    </div>
-    <div>
-      <h4 style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 16, marginBottom: 6 }}>
-        {title}
-      </h4>
-      <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.7 }}>{desc}</p>
-    </div>
-  </div>
-);
+  .feat-card {
+    transition: transform 0.3s cubic-bezier(.22,1,.36,1),
+                border-color 0.25s, box-shadow 0.3s;
+  }
+  .feat-card:hover {
+    transform:translateY(-4px);
+    border-color:rgba(99,102,241,0.45)!important;
+    box-shadow:0 20px 60px rgba(99,102,241,0.1)!important;
+  }
 
-/* ─── Stat badge ─────────────────────────────────────────────────────────── */
-const StatBadge = ({ value, label }) => (
-  <div style={{ textAlign: "center" }}>
-    <div style={{
-      fontSize: 36, fontWeight: 800,
-      background: "linear-gradient(90deg,#818cf8,#c084fc)",
-      WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-      lineHeight: 1,
-    }}>
-      {value}
-    </div>
-    <div style={{ color: "#64748b", fontSize: 13, marginTop: 6 }}>{label}</div>
-  </div>
-);
+  .btn-primary {
+    display:inline-flex; align-items:center; gap:8px;
+    padding:13px 28px; background:#6366f1; color:#fff;
+    font-weight:600; font-size:15px; border:none; border-radius:10px;
+    cursor:pointer; font-family:'DM Sans',sans-serif;
+    box-shadow:0 0 0 0 rgba(99,102,241,0.5);
+    transition:background 0.2s,transform 0.15s,box-shadow 0.2s;
+  }
+  .btn-primary:hover { background:#4f46e5; transform:translateY(-1px); box-shadow:0 8px 32px rgba(99,102,241,0.4); }
 
-/* ─── Language pill ─────────────────────────────────────────────────────── */
-const LangPill = ({ name, color }) => (
-  <span style={{
-    padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600,
-    background: `${color}22`, color, border: `1px solid ${color}44`,
-  }}>
-    {name}
-  </span>
-);
+  .btn-ghost {
+    display:inline-flex; align-items:center; gap:8px;
+    padding:13px 28px; background:transparent; color:#94a0c4;
+    font-weight:500; font-size:15px; border:1px solid #1e2240; border-radius:10px;
+    cursor:pointer; font-family:'DM Sans',sans-serif;
+    transition:border-color 0.2s,color 0.2s,transform 0.15s;
+  }
+  .btn-ghost:hover { border-color:#6366f1; color:#e2e4f0; transform:translateY(-1px); }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   Landing page
-═══════════════════════════════════════════════════════════════════════════ */
-const Landing = () => {
-  const navigate = useNavigate();
-  const [navScrolled, setNavScrolled] = useState(false);
-  const heroRef = useRef(null);
+  .step-card { transition:transform 0.3s cubic-bezier(.22,1,.36,1); }
+  .step-card:hover { transform:translateY(-3px); }
 
-  useEffect(() => {
-    const onScroll = () => setNavScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", onScroll);
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  .footer-link { color:#525878; font-size:13px; text-decoration:none; transition:color 0.2s; cursor:pointer; display:block; }
+  .footer-link:hover { color:#94a0c4; }
+`;
 
-  // Check if already logged in → redirect to dashboard
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    const user  = localStorage.getItem("user");
-    if (token && user) navigate("/dashboard", { replace: true });
-  }, [navigate]);
+/* ─── Fake syntax-highlighted code ─────────────────────────────────────────── */
+const CODE = [
+  [[["#c792ea","import "],["#e2e4f0","{ useState } "],["#c792ea","from "],["#c3e88d","'react'"]]],
+  [[]],
+  [[["#82aaff","function "],["#ffcb6b","Counter"],["#e2e4f0","() {"]]],
+  [[["#c792ea","  const "],["#e2e4f0","[count, setCount]"],["#89ddff"," = "],["#82aaff","useState"],["#e2e4f0","("],["#f78c6c","0"],["#e2e4f0",");"]]],
+  [[]],
+  [[["#c792ea","  return "],["#e2e4f0","("]]],
+  [[["#e2e4f0","    <div "],["#82aaff","className"],["#89ddff","="],["#c3e88d",'"app"'],["#e2e4f0",">"]]],
+  [[["#e2e4f0","      <h1>⚡ GemChat</h1>"]]],
+  [[["#e2e4f0","      <button "],["#82aaff","onClick"],["#89ddff","={"],["#e2e4f0","()"],["#c792ea"," => "],["#ffcb6b","setCount"],["#e2e4f0","(c"],["#89ddff"," + "],["#f78c6c","1"],["#e2e4f0",")}>"]]], 
+  [[["#e2e4f0","        Count: "],["#82aaff","{count}"]]],
+  [[["#e2e4f0","      </button>"]]],
+  [[["#e2e4f0","    </div>"]]],
+  [[["#e2e4f0","  );"]]],
+  [[["#e2e4f0","}"]]]
+];
 
-  const S = {
-    page: {
-      background: "#030712",
-      color: "#f1f5f9",
-      fontFamily: "'Inter', system-ui, sans-serif",
-      overflowX: "hidden",
-    },
-    nav: {
-      position: "fixed", top: 0, left: 0, right: 0, zIndex: 100,
-      padding: "0 40px",
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      height: 64,
-      background: navScrolled ? "rgba(3,7,18,0.92)" : "transparent",
-      backdropFilter: navScrolled ? "blur(12px)" : "none",
-      borderBottom: navScrolled ? "1px solid rgba(255,255,255,0.06)" : "none",
-      transition: "all 0.3s",
-    },
-    logo: {
-      display: "flex", alignItems: "center", gap: 10,
-      textDecoration: "none",
-    },
-    logoText: {
-      fontSize: 20, fontWeight: 800, letterSpacing: "-0.5px",
-      background: "linear-gradient(90deg,#818cf8,#c084fc)",
-      WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-    },
-    navLinks: { display: "flex", gap: 32, alignItems: "center" },
-    navLink: { color: "#94a3b8", fontSize: 14, textDecoration: "none", cursor: "pointer",
-      transition: "color 0.2s" },
-    btnOutline: {
-      padding: "8px 20px", borderRadius: 8,
-      border: "1px solid rgba(99,102,241,0.5)",
-      background: "transparent", color: "#818cf8",
-      fontSize: 14, fontWeight: 600, cursor: "pointer",
-      transition: "all 0.2s",
-    },
-    btnPrimary: {
-      padding: "8px 20px", borderRadius: 8,
-      background: "linear-gradient(135deg,#4f46e5,#7c3aed)",
-      border: "none", color: "white",
-      fontSize: 14, fontWeight: 600, cursor: "pointer",
-      boxShadow: "0 0 24px rgba(99,102,241,0.35)",
-      transition: "all 0.2s",
-    },
-    hero: {
-      position: "relative", overflow: "hidden",
-      minHeight: "100vh",
-      display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center",
-      textAlign: "center", padding: "120px 24px 80px",
-    },
-    heroGlow: {
-      position: "absolute",
-      width: 600, height: 600, borderRadius: "50%",
-      background: "radial-gradient(circle,rgba(99,102,241,0.18) 0%,transparent 70%)",
-      top: "50%", left: "50%",
-      transform: "translate(-50%,-50%)",
-      pointerEvents: "none",
-    },
-    badge: {
-      display: "inline-flex", alignItems: "center", gap: 8,
-      padding: "6px 16px", borderRadius: 999, marginBottom: 32,
-      background: "rgba(99,102,241,0.12)",
-      border: "1px solid rgba(99,102,241,0.3)",
-      fontSize: 13, color: "#818cf8", fontWeight: 600,
-    },
-    h1: {
-      fontSize: "clamp(2.4rem,6vw,4.2rem)",
-      fontWeight: 900, lineHeight: 1.1,
-      letterSpacing: "-2px", marginBottom: 24,
-      maxWidth: 800,
-    },
-    grad: {
-      background: "linear-gradient(90deg,#818cf8,#c084fc,#f472b6)",
-      WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-    },
-    heroSub: {
-      fontSize: "clamp(1rem,2vw,1.2rem)",
-      color: "#94a3b8", maxWidth: 560,
-      lineHeight: 1.7, marginBottom: 40,
-    },
-    heroBtns: { display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" },
-    heroBtnPrimary: {
-      padding: "14px 36px", borderRadius: 10, border: "none",
-      background: "linear-gradient(135deg,#4f46e5,#7c3aed)",
-      color: "white", fontSize: 16, fontWeight: 700, cursor: "pointer",
-      boxShadow: "0 0 40px rgba(99,102,241,0.4)",
-      transition: "all 0.2s", letterSpacing: "-0.3px",
-    },
-    heroBtnOutline: {
-      padding: "14px 36px", borderRadius: 10,
-      border: "1px solid rgba(255,255,255,0.15)",
-      background: "rgba(255,255,255,0.04)",
-      color: "#f1f5f9", fontSize: 16, fontWeight: 600, cursor: "pointer",
-      transition: "all 0.2s",
-    },
-    section: { padding: "96px 24px", maxWidth: 1100, margin: "0 auto" },
-    sectionLabel: {
-      fontSize: 12, fontWeight: 700, letterSpacing: "0.15em",
-      color: "#818cf8", textTransform: "uppercase", marginBottom: 12,
-    },
-    sectionTitle: {
-      fontSize: "clamp(1.6rem,3.5vw,2.4rem)", fontWeight: 800,
-      letterSpacing: "-0.5px", marginBottom: 16,
-    },
-    sectionSub: { color: "#64748b", fontSize: 16, lineHeight: 1.7, maxWidth: 540 },
-    grid3: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 20 },
-    divider: { height: 1, background: "linear-gradient(90deg,transparent,rgba(99,102,241,0.3),transparent)", margin: "0 40px" },
-    footer: {
-      borderTop: "1px solid rgba(255,255,255,0.06)",
-      padding: "40px 40px", marginTop: 0,
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      flexWrap: "wrap", gap: 16,
-    },
-  };
-
-  return (
-    <div style={S.page}>
-
-      {/* ── Navbar ─────────────────────────────────────────────────────── */}
-      <nav style={S.nav}>
-        <div style={S.logo}>
-          <div style={{
-            width: 32, height: 32, borderRadius: 8,
-            background: "linear-gradient(135deg,#4f46e5,#7c3aed)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 16,
-          }}>💎</div>
-          <span style={S.logoText}>GemChat</span>
-        </div>
-
-        <div style={S.navLinks}>
-          <a href="#features" style={S.navLink}
-            onMouseEnter={e => e.target.style.color="#f1f5f9"}
-            onMouseLeave={e => e.target.style.color="#94a3b8"}>Features</a>
-          <a href="#how" style={S.navLink}
-            onMouseEnter={e => e.target.style.color="#f1f5f9"}
-            onMouseLeave={e => e.target.style.color="#94a3b8"}>How it works</a>
-          <a href="#languages" style={S.navLink}
-            onMouseEnter={e => e.target.style.color="#f1f5f9"}
-            onMouseLeave={e => e.target.style.color="#94a3b8"}>Languages</a>
-        </div>
-
-        <div style={{ display: "flex", gap: 10 }}>
-          <button style={S.btnOutline} onClick={() => navigate("/login")}
-            onMouseEnter={e => { e.currentTarget.style.background="rgba(99,102,241,0.1)"; }}
-            onMouseLeave={e => { e.currentTarget.style.background="transparent"; }}>
-            Sign in
-          </button>
-          <button style={S.btnPrimary} onClick={() => navigate("/register")}
-            onMouseEnter={e => { e.currentTarget.style.transform="scale(1.03)"; }}
-            onMouseLeave={e => { e.currentTarget.style.transform="scale(1)"; }}>
-            Get started
-          </button>
-        </div>
-      </nav>
-
-      {/* ── Hero ───────────────────────────────────────────────────────── */}
-      <section style={S.hero} ref={heroRef}>
-        <CodeRain />
-        <div style={S.heroGlow} />
-
-        <div style={{ position: "relative", zIndex: 2 }}>
-          <div style={S.badge}>
-            <span>✨</span>
-            <span>Powered by Gemini AI</span>
-          </div>
-
-          <h1 style={S.h1}>
-            Code together,{" "}
-            <span style={S.grad}>ship faster</span>
-            <br />with AI at your side
-          </h1>
-
-          <p style={S.heroSub}>
-            GemChat is a real-time collaborative coding platform where your team and
-            an AI pair-programmer work side-by-side — across any language, any timezone.
-          </p>
-
-          <div style={S.heroBtns}>
-            <button style={S.heroBtnPrimary}
-              onClick={() => navigate("/register")}
-              onMouseEnter={e => { e.currentTarget.style.transform="translateY(-2px)"; e.currentTarget.style.boxShadow="0 0 56px rgba(99,102,241,0.55)"; }}
-              onMouseLeave={e => { e.currentTarget.style.transform="translateY(0)"; e.currentTarget.style.boxShadow="0 0 40px rgba(99,102,241,0.4)"; }}>
-              Start for free →
-            </button>
-            <button style={S.heroBtnOutline}
-              onClick={() => navigate("/login")}
-              onMouseEnter={e => { e.currentTarget.style.background="rgba(255,255,255,0.08)"; }}
-              onMouseLeave={e => { e.currentTarget.style.background="rgba(255,255,255,0.04)"; }}>
-              Sign in
-            </button>
-          </div>
-        </div>
-
-        {/* Mock editor preview */}
-        <div style={{
-          position: "relative", zIndex: 2, marginTop: 72,
-          width: "100%", maxWidth: 800,
-          borderRadius: 16,
-          border: "1px solid rgba(99,102,241,0.25)",
-          background: "rgba(15,23,42,0.85)",
-          backdropFilter: "blur(12px)",
-          overflow: "hidden",
-          boxShadow: "0 0 80px rgba(99,102,241,0.15), 0 40px 80px rgba(0,0,0,0.5)",
-        }}>
-          {/* Editor title bar */}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            padding: "12px 16px",
-            background: "rgba(30,41,59,0.8)",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-          }}>
-            <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#ef4444" }} />
-            <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b" }} />
-            <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#22c55e" }} />
-            <span style={{ marginLeft: 8, fontSize: 12, color: "#64748b", fontFamily: "monospace" }}>
-              add_numbers.cpp
-            </span>
-            <span style={{ marginLeft: "auto", fontSize: 11, color: "#4f46e5", fontWeight: 600,
-              background: "rgba(79,70,229,0.15)", padding: "2px 10px", borderRadius: 4 }}>
-              C++
-            </span>
-          </div>
-
-          {/* Code + Chat side by side */}
-          <div style={{ display: "flex" }}>
-            <div style={{ flex: 1, padding: "20px 24px", fontFamily: "'Fira Code',monospace", fontSize: 13, lineHeight: 1.8, textAlign: "left" }}>
-              <div><span style={{ color: "#818cf8" }}>#include</span> <span style={{ color: "#34d399" }}>&lt;iostream&gt;</span></div>
-              <div style={{ height: 8 }} />
-              <div><span style={{ color: "#818cf8" }}>int</span> <span style={{ color: "#60a5fa" }}>main</span><span style={{ color: "#f1f5f9" }}>()</span> <span style={{ color: "#f1f5f9" }}>{"{"}</span></div>
-              <div style={{ paddingLeft: 24 }}><span style={{ color: "#818cf8" }}>int</span> <span style={{ color: "#f1f5f9" }}>a</span><span style={{ color: "#94a3b8" }}>,</span> <span style={{ color: "#f1f5f9" }}>b</span><span style={{ color: "#f1f5f9" }}>;</span></div>
-              <div style={{ paddingLeft: 24 }}><span style={{ color: "#64748b" }}>// get two numbers from user</span></div>
-              <div style={{ paddingLeft: 24 }}><span style={{ color: "#f1f5f9" }}>std::cin</span> <span style={{ color: "#94a3b8" }}>&gt;&gt;</span> <span style={{ color: "#f1f5f9" }}>a</span> <span style={{ color: "#94a3b8" }}>&gt;&gt;</span> <span style={{ color: "#f1f5f9" }}>b</span><span style={{ color: "#f1f5f9" }}>;</span></div>
-              <div style={{ paddingLeft: 24 }}><span style={{ color: "#f1f5f9" }}>std::cout</span> <span style={{ color: "#94a3b8" }}>&lt;&lt;</span> <span style={{ color: "#34d399" }}>"Sum: "</span> <span style={{ color: "#94a3b8" }}>&lt;&lt;</span> <span style={{ color: "#f1f5f9" }}>a</span><span style={{ color: "#94a3b8" }}>+</span><span style={{ color: "#f1f5f9" }}>b</span><span style={{ color: "#f1f5f9" }}>;</span></div>
-              <div><span style={{ color: "#f1f5f9" }}>{"}"}</span></div>
-            </div>
-
-            {/* Chat panel preview */}
-            <div style={{
-              width: 220, borderLeft: "1px solid rgba(255,255,255,0.06)",
-              padding: "16px 14px",
-              display: "flex", flexDirection: "column", gap: 10,
-            }}>
-              <div style={{
-                background: "rgba(79,70,229,0.15)", borderRadius: 8, padding: "8px 10px",
-                fontSize: 12, color: "#a5b4fc",
-              }}>
-                🤖 <strong>AI:</strong> I can optimize this to handle overflow safely…
-              </div>
-              <div style={{
-                background: "rgba(99,102,241,0.25)", borderRadius: 8, padding: "8px 10px",
-                fontSize: 12, color: "#e2e8f0", alignSelf: "flex-end",
-              }}>
-                @ai add input validation
-              </div>
-              <div style={{
-                background: "rgba(15,23,42,0.6)", borderRadius: 8, padding: "8px 10px",
-                fontSize: 12, color: "#94a3b8",
-                border: "1px solid rgba(255,255,255,0.06)",
-              }}>
-                👤 <strong>alice:</strong> looks good, let's run it
-              </div>
-            </div>
-          </div>
-
-          {/* Terminal strip */}
-          <div style={{
-            padding: "10px 24px",
-            background: "#0d1117",
-            borderTop: "1px solid rgba(255,255,255,0.06)",
-            fontFamily: "monospace", fontSize: 12,
-            display: "flex", gap: 16, alignItems: "center",
-          }}>
-            <span style={{ color: "#f0c040" }}>$ </span>
-            <span style={{ color: "#4ade80" }}>Sum: 42</span>
-            <span style={{ color: "#64748b", marginLeft: "auto" }}>Process exited 0</span>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Stats ──────────────────────────────────────────────────────── */}
-      <div style={{
-        display: "flex", justifyContent: "center",
-        gap: "clamp(32px,8vw,96px)", padding: "48px 24px",
-        background: "rgba(99,102,241,0.04)",
-        borderTop: "1px solid rgba(99,102,241,0.1)",
-        borderBottom: "1px solid rgba(99,102,241,0.1)",
-        flexWrap: "wrap",
-      }}>
-        <StatBadge value="40+"  label="Languages supported" />
-        <StatBadge value="∞"    label="Files per project" />
-        <StatBadge value="Real‑time" label="Collaboration" />
-        <StatBadge value="Free" label="No API key needed" />
+const CodePreview = () => (
+  <div className="anim-float" style={{width:"100%",maxWidth:500,borderRadius:14,background:"#0c0e1a",border:"1px solid #1e2240",boxShadow:"0 40px 100px rgba(0,0,0,0.6), 0 0 0 1px rgba(99,102,241,0.08)",overflow:"hidden",fontFamily:"'JetBrains Mono',monospace"}}>
+    {/* Chrome */}
+    <div style={{display:"flex",alignItems:"center",gap:6,padding:"12px 16px",borderBottom:"1px solid #1a1c2e",background:"#090b16"}}>
+      <div style={{width:10,height:10,borderRadius:"50%",background:"#ff5f56"}}/>
+      <div style={{width:10,height:10,borderRadius:"50%",background:"#ffbd2e"}}/>
+      <div style={{width:10,height:10,borderRadius:"50%",background:"#27c93f"}}/>
+      <span style={{marginLeft:10,fontSize:11,color:"#3a3f5c",letterSpacing:"0.06em"}}>Counter.jsx</span>
+      <div style={{flex:1}}/>
+      <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(39,201,63,0.1)",border:"1px solid rgba(39,201,63,0.25)",borderRadius:20,padding:"2px 8px"}}>
+        <div style={{width:6,height:6,borderRadius:"50%",background:"#27c93f",animation:"blink 1.4s step-end infinite"}}/>
+        <span style={{fontSize:10,color:"#27c93f",fontWeight:600}}>LIVE</span>
       </div>
-
-      {/* ── Features ───────────────────────────────────────────────────── */}
-      <section id="features" style={S.section}>
-        <div style={{ textAlign: "center", marginBottom: 56 }}>
-          <div style={S.sectionLabel}>Features</div>
-          <h2 style={S.sectionTitle}>Everything your team needs</h2>
-          <p style={{ ...S.sectionSub, margin: "0 auto" }}>
-            Built for developers who want to move fast, collaborate deeply, and ship confidently.
-          </p>
-        </div>
-
-        <div style={S.grid3}>
-          <FeatureCard delay={0}   icon="🤖" title="Gemini AI pair-programmer"
-            desc="Ask @ai anything in chat. It writes code, explains concepts, refactors files, and pushes updates directly to the shared editor." />
-          <FeatureCard delay={60}  icon="⚡" title="Real-time collaboration"
-            desc="Everyone on the team sees code changes and chat messages instantly — no refresh, no lag, no conflicts." />
-          <FeatureCard delay={120} icon="▶️" title="Multi-language execution"
-            desc="Run C++, Java, Python, Go, Rust, TypeScript, and 30+ more directly in the browser terminal. No setup required." />
-          <FeatureCard delay={180} icon="📁" title="Smart file explorer"
-            desc="AI-generated files are organised into a VS Code–style tree. Delete, rename, or open any file with one click." />
-          <FeatureCard delay={240} icon="🔗" title="Invite codes"
-            desc="Share a unique invite link with your team. Anyone with the code can join the project instantly." />
-          <FeatureCard delay={300} icon="🔒" title="JWT + Redis auth"
-            desc="Secure token-based authentication with Redis-backed token blacklisting on logout. Your code stays private." />
-        </div>
-      </section>
-
-      <div style={S.divider} />
-
-      {/* ── How it works ───────────────────────────────────────────────── */}
-      <section id="how" style={S.section}>
-        <div style={{
-          display: "grid", gridTemplateColumns: "1fr 1fr", gap: 64,
-          alignItems: "center",
-        }}
-          className="how-grid"
-        >
-          <div>
-            <div style={S.sectionLabel}>How it works</div>
-            <h2 style={S.sectionTitle}>From idea to running code in minutes</h2>
-            <div style={{ display: "flex", flexDirection: "column", gap: 28, marginTop: 36 }}>
-              <StepCard num={1} title="Create a project"
-                desc="Name your workspace. An invite code is generated automatically." />
-              <StepCard num={2} title="Add collaborators"
-                desc="Share the invite code with your team. They join with one click." />
-              <StepCard num={3} title="Ask the AI"
-                desc="Type @ai generate a REST API in Express and watch files appear in the editor." />
-              <StepCard num={4} title="Run immediately"
-                desc="Hit ▶ Run — the code executes in the integrated terminal. Output appears for everyone." />
-            </div>
-          </div>
-
-          {/* Right: terminal mockup */}
-          <div style={{
-            borderRadius: 16,
-            border: "1px solid rgba(99,102,241,0.2)",
-            overflow: "hidden",
-            boxShadow: "0 0 60px rgba(99,102,241,0.1)",
-          }}>
-            <div style={{
-              background: "#1e293b", padding: "10px 16px",
-              display: "flex", alignItems: "center", gap: 8,
-              borderBottom: "1px solid rgba(255,255,255,0.06)",
-            }}>
-              <span style={{ color: "#4ade80", fontSize: 11, fontWeight: 700, fontFamily: "monospace" }}>⬛ TERMINAL</span>
-            </div>
-            <div style={{ background: "#0d1117", padding: "20px 20px", fontFamily: "monospace", fontSize: 13, lineHeight: 2 }}>
-              {[
-                { c: "#f0c040", t: "$ @ai generate a Python fibonacci function" },
-                { c: "#64748b", t: "🤖 Generating..." },
-                { c: "#4ade80", t: "✅ fibonacci.py created (12 lines)" },
-                { c: "#f0c040", t: "$ Run: fibonacci.py" },
-                { c: "#7dd3fc", t: "🔧 Piston (python 3.10.0)..." },
-                { c: "#d1d5db", t: "── Output ──────────────" },
-                { c: "#d1d5db", t: "0 1 1 2 3 5 8 13 21 34 55" },
-                { c: "#4ade80", t: "Process exited with code 0" },
-              ].map((l, i) => (
-                <div key={i} style={{ color: l.c }}>{l.t}</div>
-              ))}
-              <span style={{ color: "#4ade80" }} className="animate-pulse">█</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div style={S.divider} />
-
-      {/* ── Languages ──────────────────────────────────────────────────── */}
-      <section id="languages" style={S.section}>
-        <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <div style={S.sectionLabel}>Languages</div>
-          <h2 style={S.sectionTitle}>Run anything</h2>
-          <p style={{ ...S.sectionSub, margin: "0 auto" }}>
-            40+ languages supported via Piston. No compiler needed. No Docker required.
-          </p>
-        </div>
-
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
-          {[
-            ["C++", "#60a5fa"], ["Java", "#f59e0b"], ["Python", "#34d399"],
-            ["JavaScript", "#f0c040"], ["TypeScript", "#818cf8"], ["Go", "#22d3ee"],
-            ["Rust", "#fb923c"], ["Ruby", "#f472b6"], ["PHP", "#a78bfa"],
-            ["Kotlin", "#e879f9"], ["Swift", "#60a5fa"], ["C#", "#4ade80"],
-            ["Bash", "#94a3b8"], ["Scala", "#f87171"], ["Haskell", "#c084fc"],
-            ["Lua", "#7dd3fc"], ["Perl", "#fbbf24"], ["R", "#34d399"],
-            ["C", "#60a5fa"], ["HTML/CSS", "#f97316"],
-          ].map(([name, color]) => (
-            <LangPill key={name} name={name} color={color} />
-          ))}
-        </div>
-      </section>
-
-      {/* ── CTA banner ─────────────────────────────────────────────────── */}
-      <section style={{ padding: "96px 24px" }}>
-        <div style={{
-          maxWidth: 680, margin: "0 auto", textAlign: "center",
-          padding: "64px 40px",
-          background: "linear-gradient(135deg,rgba(79,70,229,0.15),rgba(124,58,237,0.12))",
-          border: "1px solid rgba(99,102,241,0.3)",
-          borderRadius: 24,
-          boxShadow: "0 0 80px rgba(99,102,241,0.1)",
-        }}>
-          <h2 style={{ ...S.sectionTitle, marginBottom: 16 }}>
-            Ready to ship{" "}
-            <span style={S.grad}>10× faster?</span>
-          </h2>
-          <p style={{ color: "#94a3b8", fontSize: 16, lineHeight: 1.7, marginBottom: 36 }}>
-            Create your free account in 30 seconds. No credit card required.
-          </p>
-          <button
-            style={{
-              padding: "16px 48px", borderRadius: 12, border: "none",
-              background: "linear-gradient(135deg,#4f46e5,#7c3aed)",
-              color: "white", fontSize: 17, fontWeight: 700, cursor: "pointer",
-              boxShadow: "0 0 48px rgba(99,102,241,0.45)",
-              transition: "all 0.2s",
-            }}
-            onClick={() => navigate("/register")}
-            onMouseEnter={e => { e.currentTarget.style.transform="translateY(-2px)"; e.currentTarget.style.boxShadow="0 0 64px rgba(99,102,241,0.6)"; }}
-            onMouseLeave={e => { e.currentTarget.style.transform="translateY(0)"; e.currentTarget.style.boxShadow="0 0 48px rgba(99,102,241,0.45)"; }}
-          >
-            Get started free →
-          </button>
-        </div>
-      </section>
-
-      {/* ── Footer ─────────────────────────────────────────────────────── */}
-      <footer style={S.footer}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{
-            width: 28, height: 28, borderRadius: 7,
-            background: "linear-gradient(135deg,#4f46e5,#7c3aed)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 14,
-          }}>💎</div>
-          <span style={{ fontWeight: 700, fontSize: 15, color: "#818cf8" }}>GemChat</span>
-        </div>
-        <span style={{ color: "#334155", fontSize: 13 }}>
-          AI-powered collaborative coding platform
-        </span>
-        <div style={{ display: "flex", gap: 24 }}>
-          <button onClick={() => navigate("/login")} style={{
-            background: "none", border: "none", color: "#64748b",
-            fontSize: 13, cursor: "pointer",
-          }}>Sign in</button>
-          <button onClick={() => navigate("/register")} style={{
-            background: "none", border: "none", color: "#64748b",
-            fontSize: 13, cursor: "pointer",
-          }}>Sign up</button>
-        </div>
-      </footer>
     </div>
-  );
-};
+    {/* Code */}
+    <div style={{padding:"14px 0",fontSize:12,lineHeight:1.7}}>
+      {CODE.map((line,i)=>(
+        <div key={i} style={{display:"flex",paddingRight:20}}>
+          <span style={{width:38,textAlign:"right",paddingRight:14,color:"#1e2240",userSelect:"none",flexShrink:0}}>{i+1}</span>
+          <span>{line[0].length===0?"\u00A0":line[0].map(([c,t],j)=><span key={j} style={{color:c}}>{t}</span>)}</span>
+        </div>
+      ))}
+    </div>
+    {/* Status bar */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 16px",background:"#6366f1",fontSize:10,color:"rgba(255,255,255,0.8)"}}>
+      <span>⑂ main</span>
+      <span style={{display:"flex",gap:16}}><span>JSX</span><span>Ln 9</span><span>UTF-8</span></span>
+    </div>
+  </div>
+);
 
-export default Landing;
+/* ─── Data ──────────────────────────────────────────────────────────────────── */
+const MARQUEE_ITEMS = ["Monaco Editor","WebContainer API","Socket.IO","Gemini 2.5 Flash","React 19","Vite 7","MongoDB Atlas","JWT Auth","Redis","Real-time HMR"];
+
+const FEATURES = [
+  { tag:"Live Preview", title:"React in your browser, instantly", desc:"One click creates a full React + Vite dev server inside WebContainer. Edit any file and the preview hot-reloads in under 100 ms — no page refresh, no re-click.", wide:true,
+    icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="1.8" strokeLinecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> },
+  { tag:"Collaboration", title:"Live cursors & instant sync", desc:"Every keystroke syncs across all collaborators in real time via WebSockets. Shared cursors, file tree, and built-in chat.", wide:false,
+    icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="1.8" strokeLinecap="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><circle cx="19" cy="7" r="3"/><path d="M23 21v-1a3 3 0 0 0-3-3h-1"/></svg> },
+  { tag:"Gemini AI", title:"@ai generates your code", desc:"Ask the AI to build components, debug errors, refactor functions, or explain any line of code — right inside the project chat.", wide:false,
+    icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> },
+  { tag:"Persistence", title:"Files saved automatically, always", desc:"Every file you create or edit is persisted to MongoDB Atlas in real time. Refresh the page — your entire project is exactly where you left it.", wide:true,
+    icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="1.8" strokeLinecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> },
+];
+
+const STEPS = [
+  {n:"01",title:"Create a workspace",desc:"Sign up free and create a new project. Share the invite code with any teammate — they join instantly."},
+  {n:"02",title:"Write code together",desc:"Open the Monaco editor, create files, and code. All changes sync live across every connected collaborator."},
+  {n:"03",title:"Preview & ship",desc:"Hit Run for an instant live preview. Export your code or deploy to Vercel or Netlify in one command."},
+];
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Component
+═══════════════════════════════════════════════════════════════════════════════ */
+export default function Landing() {
+  const nav = useNavigate();
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const fn = () => setScrolled(window.scrollY > 40);
+    window.addEventListener("scroll", fn, { passive: true });
+    return () => window.removeEventListener("scroll", fn);
+  }, []);
+
+  return (
+    <>
+      <style>{FONTS}</style>
+      <div style={{ minHeight:"100vh", background:"#05060f" }}>
+
+        {/* ── NAVBAR ─────────────────────────────────────────────────────────── */}
+        <nav style={{
+          position:"fixed",top:0,left:0,right:0,zIndex:100,
+          display:"flex",alignItems:"center",justifyContent:"space-between",
+          padding:"0 clamp(20px,4vw,56px)", height:64,
+          background: scrolled ? "rgba(5,6,15,0.9)" : "transparent",
+          backdropFilter: scrolled ? "blur(20px)" : "none",
+          borderBottom: scrolled ? "1px solid rgba(20,22,48,0.8)" : "1px solid transparent",
+          transition:"all 0.35s cubic-bezier(.22,1,.36,1)",
+        }}>
+          <div style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}} onClick={()=>window.scrollTo(0,0)}>
+            <div style={{width:32,height:32,borderRadius:8,background:"linear-gradient(135deg,#6366f1,#8b5cf6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,boxShadow:"0 0 20px rgba(99,102,241,0.4)"}}>💎</div>
+            <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:17,color:"#e2e4f0",letterSpacing:"-0.02em"}}>GemChat</span>
+          </div>
+
+          <div style={{display:"flex",gap:34,alignItems:"center"}}>
+            {["Features","How it works","Pricing"].map(l=><span key={l} className="nav-link">{l}</span>)}
+          </div>
+
+          <div style={{display:"flex",gap:10,alignItems:"center"}}>
+            <button className="btn-ghost" style={{padding:"8px 18px",fontSize:13}} onClick={()=>nav("/login")}>Sign in</button>
+            <button className="btn-primary" style={{padding:"8px 18px",fontSize:13}} onClick={()=>nav("/register")}>Start free</button>
+          </div>
+        </nav>
+
+        {/* ── HERO ───────────────────────────────────────────────────────────── */}
+        <section style={{position:"relative",minHeight:"100vh",display:"flex",alignItems:"center",padding:"120px clamp(20px,4vw,56px) 80px",overflow:"hidden"}}>
+          {/* BG layers */}
+          <div style={{position:"absolute",inset:0,pointerEvents:"none"}}>
+            <div style={{position:"absolute",width:700,height:700,borderRadius:"50%",background:"radial-gradient(circle,rgba(99,102,241,0.12) 0%,transparent 70%)",top:"5%",left:"-12%"}}/>
+            <div style={{position:"absolute",width:500,height:500,borderRadius:"50%",background:"radial-gradient(circle,rgba(139,92,246,0.07) 0%,transparent 70%)",top:"15%",right:"-5%"}}/>
+            <div style={{position:"absolute",inset:0,backgroundImage:"linear-gradient(rgba(20,22,48,0.14) 1px,transparent 1px),linear-gradient(90deg,rgba(20,22,48,0.14) 1px,transparent 1px)",backgroundSize:"60px 60px"}}/>
+            <div style={{position:"absolute",bottom:0,left:0,right:0,height:220,background:"linear-gradient(to bottom,transparent,#05060f)"}}/>
+          </div>
+
+          <div style={{maxWidth:1200,margin:"0 auto",width:"100%",display:"flex",alignItems:"center",gap:"clamp(40px,6vw,100px)",position:"relative",flexWrap:"wrap"}}>
+            {/* Copy */}
+            <div style={{flex:"0 0 min(480px,100%)",minWidth:280}}>
+              <div className="anim-fadeup" style={{animationDelay:"0ms",display:"inline-flex",alignItems:"center",gap:8,background:"rgba(99,102,241,0.08)",border:"1px solid rgba(99,102,241,0.22)",borderRadius:100,padding:"5px 14px",marginBottom:26}}>
+                <div style={{width:6,height:6,borderRadius:"50%",background:"#6366f1",boxShadow:"0 0 8px #6366f1"}}/>
+                <span style={{fontSize:11,fontWeight:700,color:"#818cf8",letterSpacing:"0.07em",textTransform:"uppercase"}}>Now with Gemini 2.5 Flash</span>
+              </div>
+
+              <h1 className="anim-fadeup" style={{animationDelay:"80ms",fontFamily:"'Syne',sans-serif",fontSize:"clamp(36px,4.5vw,58px)",fontWeight:800,lineHeight:1.1,letterSpacing:"-0.04em",color:"#e8eaf4",marginBottom:22}}>
+                Code together,
+                <br/>
+                <span style={{background:"linear-gradient(90deg,#818cf8 0%,#c084fc 50%,#818cf8 100%)",backgroundSize:"200% 100%",animation:"gradShift 4s ease infinite",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>
+                  ship faster.
+                </span>
+              </h1>
+
+              <p className="anim-fadeup" style={{animationDelay:"160ms",fontSize:17,color:"#6670a0",lineHeight:1.78,marginBottom:36,maxWidth:420}}>
+                An AI-powered collaborative coding IDE. Real-time editing, live React preview, and Gemini AI — all running in your browser.
+              </p>
+
+              <div className="anim-fadeup" style={{animationDelay:"240ms",display:"flex",gap:12,flexWrap:"wrap"}}>
+                <button className="btn-primary" onClick={()=>nav("/register")}>
+                  Start building free
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                </button>
+                <button className="btn-ghost" onClick={()=>nav("/login")}>Sign in</button>
+              </div>
+
+              {/* Social proof */}
+              <div className="anim-fadeup" style={{animationDelay:"320ms",display:"flex",alignItems:"center",gap:14,marginTop:34}}>
+                <div style={{display:"flex"}}>
+                  {["#6366f1","#8b5cf6","#06b6d4","#10b981","#f59e0b"].map((c,i)=>(
+                    <div key={i} style={{width:28,height:28,borderRadius:"50%",background:c,border:"2px solid #05060f",marginLeft:i?-8:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff"}}>
+                      {["A","J","S","M","R"][i]}
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <div style={{display:"flex",gap:2,marginBottom:2}}>{[1,2,3,4,5].map(s=><span key={s} style={{color:"#f59e0b",fontSize:12}}>★</span>)}</div>
+                  <span style={{fontSize:12,color:"#3a3f5c"}}>Loved by 1,000+ developers</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Code preview */}
+            <div className="anim-fadein" style={{animationDelay:"180ms",flex:1,display:"flex",justifyContent:"center",minWidth:280}}>
+              <CodePreview/>
+            </div>
+          </div>
+        </section>
+
+        {/* ── MARQUEE ─────────────────────────────────────────────────────────── */}
+        <div style={{borderTop:"1px solid #0a0b18",borderBottom:"1px solid #0a0b18",background:"#06070f",overflow:"hidden",padding:"16px 0"}}>
+          <div style={{display:"flex",animation:"marquee 30s linear infinite",width:"max-content"}}>
+            {[...MARQUEE_ITEMS,...MARQUEE_ITEMS].map((item,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:16,padding:"0 28px",whiteSpace:"nowrap"}}>
+                <div style={{width:4,height:4,borderRadius:"50%",background:"#6366f1"}}/>
+                <span style={{fontSize:13,color:"#2a2f48",fontWeight:500,letterSpacing:"0.04em"}}>{item}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── STATS ───────────────────────────────────────────────────────────── */}
+        <section style={{padding:"80px clamp(20px,4vw,56px)"}}>
+          <div style={{maxWidth:1200,margin:"0 auto",display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:1,background:"#0a0b18",borderRadius:16,overflow:"hidden",border:"1px solid #0a0b18"}}>
+            {[["< 100ms","Hot reload latency"],["∞","Files per project"],["20+","Languages supported"],["Free","No credit card"]].map(([stat,label])=>(
+              <div key={label} style={{background:"#06070f",padding:"36px 28px",textAlign:"center"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontSize:34,fontWeight:800,color:"#e2e4f0",letterSpacing:"-0.03em",marginBottom:6}}>{stat}</div>
+                <div style={{fontSize:13,color:"#525878"}}>{label}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ── FEATURES BENTO ──────────────────────────────────────────────────── */}
+        <section style={{padding:"0 clamp(20px,4vw,56px) 100px"}}>
+          <div style={{maxWidth:1200,margin:"0 auto"}}>
+            <div style={{textAlign:"center",marginBottom:52}}>
+              <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(99,102,241,0.07)",border:"1px solid rgba(99,102,241,0.15)",borderRadius:100,padding:"5px 14px",marginBottom:18}}>
+                <span style={{fontSize:11,fontWeight:700,color:"#6366f1",letterSpacing:"0.08em",textTransform:"uppercase"}}>Features</span>
+              </div>
+              <h2 style={{fontFamily:"'Syne',sans-serif",fontSize:"clamp(26px,3.5vw,44px)",fontWeight:800,color:"#e2e4f0",letterSpacing:"-0.03em",lineHeight:1.15,marginBottom:14}}>
+                Everything you need to build, <br/>together.
+              </h2>
+              <p style={{fontSize:16,color:"#525878",maxWidth:460,margin:"0 auto",lineHeight:1.72}}>
+                A complete collaborative IDE running entirely in your browser, powered by WebContainer API.
+              </p>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+              {FEATURES.map((f,i)=>(
+                <div key={i} className="feat-card" style={{gridColumn:f.wide?"span 2":"span 1",background:"#06070f",border:"1px solid #0e1020",borderRadius:16,padding:"30px 28px",position:"relative",overflow:"hidden"}}>
+                  <div style={{position:"absolute",top:-40,right:-40,width:160,height:160,borderRadius:"50%",background:"radial-gradient(circle,rgba(99,102,241,0.05) 0%,transparent 70%)",pointerEvents:"none"}}/>
+                  <div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:42,height:42,borderRadius:10,background:"rgba(99,102,241,0.08)",border:"1px solid rgba(99,102,241,0.14)",marginBottom:18}}>{f.icon}</div>
+                  <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#6366f1",marginBottom:10}}>{f.tag}</div>
+                  <h3 style={{fontFamily:"'Syne',sans-serif",fontSize:18,fontWeight:700,color:"#e2e4f0",marginBottom:10,letterSpacing:"-0.02em"}}>{f.title}</h3>
+                  <p style={{fontSize:14,color:"#525878",lineHeight:1.75,maxWidth:380}}>{f.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── HOW IT WORKS ────────────────────────────────────────────────────── */}
+        <section style={{padding:"0 clamp(20px,4vw,56px) 100px"}}>
+          <div style={{maxWidth:1200,margin:"0 auto"}}>
+            <div style={{textAlign:"center",marginBottom:52}}>
+              <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(99,102,241,0.07)",border:"1px solid rgba(99,102,241,0.15)",borderRadius:100,padding:"5px 14px",marginBottom:18}}>
+                <span style={{fontSize:11,fontWeight:700,color:"#6366f1",letterSpacing:"0.08em",textTransform:"uppercase"}}>How it works</span>
+              </div>
+              <h2 style={{fontFamily:"'Syne',sans-serif",fontSize:"clamp(26px,3.5vw,44px)",fontWeight:800,color:"#e2e4f0",letterSpacing:"-0.03em"}}>
+                From zero to live in three steps.
+              </h2>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+              {STEPS.map((s,i)=>(
+                <div key={i} className="step-card" style={{background:"#06070f",border:"1px solid #0e1020",borderRadius:16,padding:"36px 28px"}}>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontSize:52,fontWeight:800,color:"#0e1020",marginBottom:18,letterSpacing:"-0.05em",userSelect:"none"}}>{s.n}</div>
+                  <div style={{width:32,height:2,background:"#6366f1",borderRadius:2,marginBottom:18}}/>
+                  <h3 style={{fontFamily:"'Syne',sans-serif",fontSize:17,fontWeight:700,color:"#e2e4f0",marginBottom:10,letterSpacing:"-0.02em"}}>{s.title}</h3>
+                  <p style={{fontSize:14,color:"#525878",lineHeight:1.75}}>{s.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── TESTIMONIAL ─────────────────────────────────────────────────────── */}
+        <section style={{padding:"0 clamp(20px,4vw,56px) 100px"}}>
+          <div style={{maxWidth:1200,margin:"0 auto"}}>
+            <div style={{background:"#06070f",border:"1px solid #0e1020",borderRadius:20,padding:"clamp(30px,5vw,56px)",display:"flex",alignItems:"center",gap:"clamp(30px,5vw,60px)",flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:260}}>
+                <div style={{fontSize:44,color:"#6366f1",lineHeight:1,marginBottom:14,fontFamily:"Georgia,serif"}}>"</div>
+                <blockquote style={{fontSize:18,color:"#94a0c4",lineHeight:1.78,fontStyle:"italic",marginBottom:22}}>
+                  GemChat replaced three separate tools for us. The live preview and AI code generation save our team hours every sprint.
+                </blockquote>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:40,height:40,borderRadius:"50%",background:"linear-gradient(135deg,#6366f1,#8b5cf6)",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:14,color:"#fff"}}>A</div>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:600,color:"#e2e4f0"}}>Aryan Singh</div>
+                    <div style={{fontSize:12,color:"#525878"}}>Lead Developer, TechCo</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{width:1,height:110,background:"#0e1020",flexShrink:0}}/>
+              <div style={{display:"flex",flexDirection:"column",gap:26,flexShrink:0}}>
+                {[["3×","Faster code reviews"],["80%","Less context switching"],["Free","For individuals, forever"]].map(([n,l])=>(
+                  <div key={l}>
+                    <div style={{fontFamily:"'Syne',sans-serif",fontSize:28,fontWeight:800,color:"#6366f1",letterSpacing:"-0.03em"}}>{n}</div>
+                    <div style={{fontSize:13,color:"#525878"}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── CTA ─────────────────────────────────────────────────────────────── */}
+        <section style={{padding:"0 clamp(20px,4vw,56px) 120px"}}>
+          <div style={{maxWidth:1200,margin:"0 auto"}}>
+            <div style={{position:"relative",overflow:"hidden",borderRadius:24,background:"linear-gradient(135deg,#0c0e28 0%,#080a1a 100%)",border:"1px solid rgba(99,102,241,0.18)",padding:"clamp(48px,8vw,88px) clamp(24px,6vw,64px)",textAlign:"center"}}>
+              <div style={{position:"absolute",width:500,height:500,borderRadius:"50%",background:"radial-gradient(circle,rgba(99,102,241,0.13) 0%,transparent 70%)",top:"-180px",left:"50%",transform:"translateX(-50%)",pointerEvents:"none"}}/>
+              <div style={{position:"relative"}}>
+                <h2 style={{fontFamily:"'Syne',sans-serif",fontSize:"clamp(28px,4vw,52px)",fontWeight:800,color:"#e2e4f0",letterSpacing:"-0.04em",marginBottom:16,lineHeight:1.1}}>
+                  Start building with your team<br/>today — it's free.
+                </h2>
+                <p style={{fontSize:16,color:"#525878",marginBottom:38,maxWidth:420,margin:"0 auto 38px",lineHeight:1.72}}>
+                  No credit card. No install. Open your browser and start coding in seconds.
+                </p>
+                <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
+                  <button className="btn-primary" style={{padding:"14px 34px",fontSize:15}} onClick={()=>nav("/register")}>
+                    Create free account
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  </button>
+                  <button className="btn-ghost" style={{padding:"14px 34px",fontSize:15}} onClick={()=>nav("/login")}>
+                    Sign in to existing account
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── FOOTER ──────────────────────────────────────────────────────────── */}
+        <footer style={{borderTop:"1px solid #0a0b18",padding:"48px clamp(20px,4vw,56px)",background:"#05060f"}}>
+          <div style={{maxWidth:1200,margin:"0 auto"}}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:40,flexWrap:"wrap",marginBottom:48}}>
+              <div style={{maxWidth:230}}>
+                <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:14}}>
+                  <div style={{width:28,height:28,borderRadius:7,background:"linear-gradient(135deg,#6366f1,#8b5cf6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>💎</div>
+                  <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:16,color:"#e2e4f0"}}>GemChat</span>
+                </div>
+                <p style={{fontSize:13,color:"#525878",lineHeight:1.72}}>AI-powered collaborative coding platform for modern development teams.</p>
+              </div>
+              {[
+                {title:"Product", links:["Features","How it works","Pricing","Changelog"]},
+                {title:"Company", links:["About","Blog","Careers","Contact"]},
+                {title:"Legal",   links:["Privacy","Terms","Security","Cookies"]},
+              ].map(col=>(
+                <div key={col.title}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#e2e4f0",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:16}}>{col.title}</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {col.links.map(l=><span key={l} className="footer-link">{l}</span>)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{borderTop:"1px solid #0a0b18",paddingTop:26,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:14}}>
+              <span style={{fontSize:12,color:"#1e2240"}}>© {new Date().getFullYear()} GemChat. Built with React, MongoDB, Socket.IO & Gemini AI.</span>
+              <div style={{display:"flex",gap:20}}>
+                {["Twitter","GitHub","Discord"].map(s=><span key={s} className="footer-link">{s}</span>)}
+              </div>
+            </div>
+          </div>
+        </footer>
+
+      </div>
+    </>
+  );
+}

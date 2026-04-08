@@ -1,287 +1,281 @@
-import * as projectService from "../services/Project.service.js";
-import userModel from "../models/user.model.js";
-import { io } from "../server.js";
+import ProjectModel from "../models/Project.model.js";
+import UserModel    from "../models/user.model.js";
+import * as svc     from "../services/Project.service.js";
+import { io }       from "../server.js";
+import {
+  decodeFileKey,
+  encodeFileKey,
+  encodeFileTree,
+  normalizeFileEntry,
+} from "../utils/fileTree.js";
 
-// helper — resolve logged-in user from JWT
+// ── Resolve logged-in user ────────────────────────────────────────────────────
+// FIX: old JWTs only had { email }, new ones have { _id, email, username }.
+// Support both so users don't get logged out after the upgrade.
 const getMe = async (req) => {
-  const user = await userModel.findById(req.user._id);
-  if (!user) throw new Error("User not found");
-  return user;
+  if (req.user?._id) {
+    const user = await UserModel.findById(req.user._id);
+    if (user) return user;
+  }
+  // Fallback: look up by email for old tokens
+  if (req.user?.email) {
+    const user = await UserModel.findOne({ email: req.user.email });
+    if (user) return user;
+  }
+  throw Object.assign(new Error("User not found"), { status: 401 });
 };
 
-// ── POST /projects/create ──────────────────────────────────────────────────
+// ── Member / admin guards ─────────────────────────────────────────────────────
+// FIX: after populate(), project.users contains full documents.
+// Use (u._id || u).toString() so it works for BOTH ObjectIds and populated docs.
+const assertMember = (project, userId) => {
+  const uid = userId.toString();
+  const ok  = project.users.some(u => (u._id ?? u).toString() === uid);
+  if (!ok) throw Object.assign(new Error("Access denied"), { status: 403 });
+};
+
+const assertAdmin = (project, userId) => {
+  const uid = userId.toString();
+  const ok  = project.admins?.some(a => (a._id ?? a).toString() === uid);
+  if (!ok) throw Object.assign(new Error("Admin only"), { status: 403 });
+};
+
+// ── POST /projects/create ─────────────────────────────────────────────────────
 export const createProject = async (req, res) => {
   try {
-    const me = await getMe(req);
-    const project = await projectService.createProject({
-      name:   req.body.name,
-      userId: me._id,
-    });
-    res.status(201).json(project);
+    const me      = await getMe(req);
+    const project = await svc.createProject({ name: req.body.name, userId: me._id });
+    res.status(201).json({ project });
   } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
+    res.status(err.status || 400).json({ error: err.message });
   }
 };
 
-// ── GET /projects/all ──────────────────────────────────────────────────────
+// ── GET /projects/all ─────────────────────────────────────────────────────────
 export const getAllProject = async (req, res) => {
   try {
     const me       = await getMe(req);
-    const projects = await projectService.getAllProjectByUserId({ userId: me._id });
+    const projects = await svc.getAllProjectByUserId({ userId: me._id });
     res.status(200).json({ projects });
   } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
+    res.status(err.status || 400).json({ error: err.message });
   }
 };
 
-// ── DELETE /projects/:projectId — admin only ───────────────────────────────
-export const deleteProject = async (req, res) => {
-  try {
-    const me = await getMe(req);
-    await projectService.deleteProject({
-      projectId: req.params.projectId,
-      userId:    me._id,
-    });
-    // Notify all room members that the project is gone
-    io.to(req.params.projectId).emit("project-deleted", {
-      projectId: req.params.projectId,
-    });
-    res.status(200).json({ message: "Project deleted" });
-  } catch (err) {
-    console.error(err);
-    res.status(err.message.includes("admin") ? 403 : 400).json({ error: err.message });
-  }
-};
-
-// ── PUT /projects/add-user ─────────────────────────────────────────────────
-export const addUserProject = async (req, res) => {
-  try {
-    const { projectId, users } = req.body;
-    const me = await getMe(req);
-    const project = await projectService.addUserToProject({
-      projectId, users, userId: me._id,
-    });
-    users.forEach((userId) => {
-      for (const [socketId, socket] of io.of("/").sockets) {
-        if (socket.user?._id === userId) socket.join(projectId);
-      }
-    });
-    io.to(projectId).emit("user-joined", { projectId, users });
-    res.status(200).json({ project });
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
-  }
-};
-
-// ── DELETE /projects/:projectId/members/:targetUserId — admin only ─────────
-export const removeMember = async (req, res) => {
-  try {
-    const me = await getMe(req);
-    const project = await projectService.removeMember({
-      projectId:    req.params.projectId,
-      targetUserId: req.params.targetUserId,
-      requesterId:  me._id,
-    });
-    // Kick the target user's socket out of the room
-    for (const [, socket] of io.of("/").sockets) {
-      if (socket.user?._id === req.params.targetUserId) {
-        socket.leave(req.params.projectId);
-        socket.emit("kicked", { projectId: req.params.projectId });
-      }
-    }
-    io.to(req.params.projectId).emit("member-removed", {
-      userId:    req.params.targetUserId,
-      projectId: req.params.projectId,
-    });
-    res.status(200).json({ project });
-  } catch (err) {
-    console.error(err);
-    res.status(err.message.includes("admin") ? 403 : 400).json({ error: err.message });
-  }
-};
-
-// ── POST /projects/:projectId/exit — any member ────────────────────────────
-export const exitProject = async (req, res) => {
-  try {
-    const me = await getMe(req);
-    await projectService.exitProject({
-      projectId: req.params.projectId,
-      userId:    me._id,
-    });
-    io.to(req.params.projectId).emit("member-removed", {
-      userId:    me._id.toString(),
-      projectId: req.params.projectId,
-    });
-    res.status(200).json({ message: "You have left the project" });
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
-  }
-};
-
-// ── PUT /projects/:projectId/promote/:targetUserId — admin only ────────────
-export const promoteToAdmin = async (req, res) => {
-  try {
-    const me = await getMe(req);
-    const project = await projectService.promoteToAdmin({
-      projectId:    req.params.projectId,
-      targetUserId: req.params.targetUserId,
-      requesterId:  me._id,
-    });
-    io.to(req.params.projectId).emit("member-promoted", {
-      userId:    req.params.targetUserId,
-      projectId: req.params.projectId,
-    });
-    res.status(200).json({ project });
-  } catch (err) {
-    console.error(err);
-    res.status(err.message.includes("admin") ? 403 : 400).json({ error: err.message });
-  }
-};
-
-// ── POST /projects/join ────────────────────────────────────────────────────
-export const joinProjectByCode = async (req, res) => {
-  try {
-    const { inviteCode } = req.body;
-    if (!inviteCode) return res.status(400).json({ error: "inviteCode is required" });
-    const me      = await getMe(req);
-    const project = await projectService.joinProjectByInviteCode({
-      inviteCode,
-      userId: me._id,
-    });
-    io.to(project._id.toString()).emit("user-joined", {
-      projectId: project._id,
-      user: { _id: me._id, email: me.email, username: me.username },
-    });
-    res.status(200).json({ project });
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
-  }
-};
-
-// ── POST /projects/regenerate-invite/:projectId ────────────────────────────
-export const regenerateInviteCode = async (req, res) => {
-  try {
-    const me      = await getMe(req);
-    const project = await projectService.regenerateInviteCode({
-      projectId: req.params.projectId,
-      userId:    me._id,
-    });
-    io.to(req.params.projectId).emit("invite-regenerated", {
-      projectId: req.params.projectId,
-      newCode:   project.inviteCode,
-    });
-    res.status(200).json({ inviteCode: project.inviteCode });
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
-  }
-};
-
-// ── GET /projects/get-project/:projectId ──────────────────────────────────
+// ── GET /projects/get-project/:projectId ──────────────────────────────────────
 export const getProjectById = async (req, res) => {
   try {
     const me      = await getMe(req);
-    const project = await projectService.getProjectByIdIn({
-      projectId: req.params.projectId,
-    });
+    const project = await ProjectModel.findById(req.params.projectId)
+      .populate("users",  "_id email username")
+      .populate("admins", "_id email username");
     if (!project) return res.status(404).json({ error: "Project not found" });
-
-    const isMember = project.users.some(
-      (u) => u._id.toString() === me._id.toString()
-    );
-    if (!isMember) return res.status(403).json({ error: "Access denied" });
-
+    assertMember(project, me._id);
     res.status(200).json({ project });
   } catch (err) {
-    console.error(err);
+    res.status(err.status || 400).json({ error: err.message });
+  }
+};
+
+// ── DELETE /projects/:projectId ───────────────────────────────────────────────
+export const deleteProject = async (req, res) => {
+  try {
+    const me      = await getMe(req);
+    const project = await ProjectModel.findById(req.params.projectId);
+    if (!project) return res.status(404).json({ error: "Not found" });
+    assertAdmin(project, me._id);
+    await project.deleteOne();
+    io.to(req.params.projectId).emit("project-deleted", { projectId: req.params.projectId });
+    res.status(200).json({ message: "Deleted" });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+};
+
+// ── PUT /projects/add-user ────────────────────────────────────────────────────
+export const addUserProject = async (req, res) => {
+  try {
+    const { projectId, users } = req.body;
+    const me      = await getMe(req);
+    const project = await svc.addUserToProject({ projectId, users, userId: me._id });
+    res.status(200).json({ project });
+  } catch (err) {
     res.status(400).json({ error: err.message });
   }
 };
 
-// ── PUT /projects/:projectId/files — save entire fileTree ─────────────────
+// ── DELETE /projects/:projectId/members/:targetUserId ────────────────────────
+export const removeMember = async (req, res) => {
+  try {
+    const me      = await getMe(req);
+    const project = await ProjectModel.findById(req.params.projectId);
+    if (!project) return res.status(404).json({ error: "Not found" });
+    assertAdmin(project, me._id);
+
+    project.users  = project.users.filter(u => (u._id ?? u).toString() !== req.params.targetUserId);
+    project.admins = project.admins.filter(a => (a._id ?? a).toString() !== req.params.targetUserId);
+    await project.save();
+
+    io.to(req.params.projectId).emit("member-removed", { userId: req.params.targetUserId });
+    io.to(req.params.projectId).emit("kicked", { projectId: req.params.projectId, userId: req.params.targetUserId });
+    res.status(200).json({ message: "Removed" });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+};
+
+// ── POST /projects/:projectId/exit ────────────────────────────────────────────
+export const exitProject = async (req, res) => {
+  try {
+    const me      = await getMe(req);
+    const project = await ProjectModel.findById(req.params.projectId);
+    if (!project) return res.status(404).json({ error: "Not found" });
+
+    const myIdStr     = me._id.toString();
+    const isLastAdmin = project.admins.some(a => (a._id ?? a).toString() === myIdStr)
+      && project.admins.length === 1
+      && project.users.length  > 1;
+    if (isLastAdmin)
+      return res.status(400).json({ error: "Transfer admin rights before leaving" });
+
+    project.users  = project.users.filter(u => (u._id ?? u).toString() !== myIdStr);
+    project.admins = project.admins.filter(a => (a._id ?? a).toString() !== myIdStr);
+    await project.save();
+    res.status(200).json({ message: "Left project" });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+};
+
+// ── PUT /projects/:projectId/promote/:targetUserId ────────────────────────────
+export const promoteToAdmin = async (req, res) => {
+  try {
+    const me      = await getMe(req);
+    const project = await ProjectModel.findById(req.params.projectId);
+    if (!project) return res.status(404).json({ error: "Not found" });
+    assertAdmin(project, me._id);
+
+    const targetId = req.params.targetUserId;
+    if (!project.admins.some(a => (a._id ?? a).toString() === targetId)) {
+      project.admins.push(targetId);
+      await project.save();
+    }
+    io.to(req.params.projectId).emit("member-promoted", { userId: targetId });
+    res.status(200).json({ message: "Promoted" });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+};
+
+// ── POST /projects/join ───────────────────────────────────────────────────────
+export const joinProjectByCode = async (req, res) => {
+  try {
+    const me      = await getMe(req);
+    const project = await ProjectModel.findOne({ inviteCode: req.body.inviteCode.trim() });
+    if (!project) return res.status(404).json({ error: "Invalid invite code" });
+
+    if (!project.users.some(u => (u._id ?? u).toString() === me._id.toString())) {
+      project.users.push(me._id);
+      await project.save();
+    }
+    const populated = await project.populate("users", "_id email username");
+    res.status(200).json({ project: populated });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+};
+
+// ── POST /projects/regenerate-invite/:projectId ───────────────────────────────
+export const regenerateInviteCode = async (req, res) => {
+  try {
+    const me      = await getMe(req);
+    const project = await ProjectModel.findById(req.params.projectId);
+    if (!project) return res.status(404).json({ error: "Not found" });
+    assertAdmin(project, me._id);
+
+    const { randomBytes } = await import("crypto");
+    project.inviteCode = randomBytes(10).toString("hex");
+    await project.save();
+    res.status(200).json({ inviteCode: project.inviteCode });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+};
+
+// ═══ FILE TREE PERSISTENCE ════════════════════════════════════════════════════
+
+// ── PUT /projects/:projectId/files — replace entire fileTree ──────────────────
 export const saveFileTree = async (req, res) => {
   try {
-    const me = await getMe(req);
-    const { projectId } = req.params;
-    const { fileTree } = req.body; // { "src/App.jsx": { content, lang }, ... }
+    const me      = await getMe(req);
+    const project = await ProjectModel.findById(req.params.projectId);
+    if (!project) return res.status(404).json({ error: "Not found" });
+    assertMember(project, me._id);
 
+    const { fileTree } = req.body;
     if (!fileTree || typeof fileTree !== "object")
-      return res.status(400).json({ error: "fileTree is required" });
+      return res.status(400).json({ error: "fileTree object required" });
 
-    const project = await (await import("../models/Project.model.js")).default.findById(projectId);
-    if (!project) return res.status(404).json({ error: "Project not found" });
-
-    const isMember = project.users.some(u => u.toString() === me._id.toString());
-    if (!isMember) return res.status(403).json({ error: "Access denied" });
-
-    // Replace entire fileTree
-    project.fileTree = new Map(Object.entries(fileTree));
+    project.fileTree = encodeFileTree(fileTree);
+    project.markModified("fileTree");
     await project.save();
-
-    res.status(200).json({ message: "File tree saved" });
+    res.status(200).json({ message: "Saved" });
   } catch (err) {
-    console.error("saveFileTree error:", err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("saveFileTree error:", err.message);
+    res.status(err.status || 500).json({ error: err.message });
   }
 };
 
-// ── PATCH /projects/:projectId/files/:encodedPath — save one file ─────────
+// ── PATCH /projects/:projectId/files/:encodedPath — upsert one file ───────────
 export const saveOneFile = async (req, res) => {
   try {
-    const me = await getMe(req);
-    const { projectId, encodedPath } = req.params;
-    const { content, lang } = req.body;
-    const filePath = decodeURIComponent(encodedPath);
+    const me      = await getMe(req);
+    const project = await ProjectModel.findById(req.params.projectId);
+    if (!project) return res.status(404).json({ error: "Not found" });
+    assertMember(project, me._id);
 
-    const project = await (await import("../models/Project.model.js")).default.findById(projectId);
-    if (!project) return res.status(404).json({ error: "Project not found" });
-
-    const isMember = project.users.some(u => u.toString() === me._id.toString());
-    if (!isMember) return res.status(403).json({ error: "Access denied" });
-
-    project.fileTree.set(filePath, { content: content ?? "", lang: lang ?? "plaintext" });
+    const path               = decodeURIComponent(req.params.encodedPath);
+    const { content = "", lang = "plaintext" } = req.body;
+    const encodedPath = encodeFileKey(path);
+    project.fileTree = {
+      ...(project.fileTree || {}),
+      [encodedPath]: normalizeFileEntry({ content, lang }),
+    };
+    project.markModified("fileTree");
     await project.save();
-
-    res.status(200).json({ message: "File saved" });
+    res.status(200).json({ message: "Saved" });
   } catch (err) {
-    console.error("saveOneFile error:", err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("saveOneFile error:", err.message);
+    res.status(err.status || 500).json({ error: err.message });
   }
 };
 
-// ── DELETE /projects/:projectId/files/:encodedPath — delete one file/dir ──
+// ── DELETE /projects/:projectId/files/:encodedPath — remove file or dir ───────
 export const deleteFileFromTree = async (req, res) => {
   try {
-    const me = await getMe(req);
-    const { projectId, encodedPath } = req.params;
-    const { type } = req.query; // "file" | "dir"
-    const filePath = decodeURIComponent(encodedPath);
+    const me      = await getMe(req);
+    const project = await ProjectModel.findById(req.params.projectId);
+    if (!project) return res.status(404).json({ error: "Not found" });
+    assertMember(project, me._id);
 
-    const project = await (await import("../models/Project.model.js")).default.findById(projectId);
-    if (!project) return res.status(404).json({ error: "Project not found" });
+    const path = decodeURIComponent(req.params.encodedPath);
+    const type = req.query.type ?? "file";
 
-    const isMember = project.users.some(u => u.toString() === me._id.toString());
-    if (!isMember) return res.status(403).json({ error: "Access denied" });
-
+    const nextTree = { ...(project.fileTree || {}) };
     if (type === "dir") {
-      for (const key of project.fileTree.keys()) {
-        if (key.startsWith(filePath + "/") || key === filePath) {
-          project.fileTree.delete(key);
-        }
+      for (const encodedKey of Object.keys(nextTree)) {
+        const decodedPath = decodeFileKey(encodedKey);
+        if (decodedPath === path || decodedPath.startsWith(path + "/")) delete nextTree[encodedKey];
       }
     } else {
-      project.fileTree.delete(filePath);
+      delete nextTree[encodeFileKey(path)];
     }
+    project.fileTree = nextTree;
+    project.markModified("fileTree");
     await project.save();
-
-    res.status(200).json({ message: "File deleted" });
+    res.status(200).json({ message: "Deleted" });
   } catch (err) {
-    console.error("deleteFileFromTree error:", err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("deleteFileFromTree error:", err.message);
+    res.status(err.status || 500).json({ error: err.message });
   }
 };
