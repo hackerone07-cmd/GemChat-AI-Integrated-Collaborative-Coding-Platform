@@ -482,13 +482,25 @@ const Project=()=>{
 
   const deleteItem=useCallback((path,type)=>{
     if(!window.confirm(`Delete "${path.split("/").pop()}"?`))return;
-    setFiles(p=>{const n={...p};if(type==="dir")Object.keys(n).forEach(k=>{if(k.startsWith(path+"/"))delete n[k];});else delete n[path];return n;});
+    if(active===path||(type==="dir"&&active?.startsWith(path+"/"))){
+      clearTimeout(debRef.current);
+      debRef.current=null;
+    }
+    let nextFiles={};
+    setFiles(p=>{
+      const n={...p};
+      if(type==="dir")Object.keys(n).forEach(k=>{if(k.startsWith(path+"/"))delete n[k];});
+      else delete n[path];
+      nextFiles=n;
+      return n;
+    });
     setTabs(p=>type==="dir"?p.filter(t=>!t.startsWith(path+"/")):p.filter(t=>t!==path));
     if(active===path||(type==="dir"&&active?.startsWith(path+"/")))setActive(null);
     // Persist deletion to DB
     axios.delete(`/projects/${projectId}/files/${encodeURIComponent(path)}?type=${type}`).catch(console.error);
+    saveWholeTree(nextFiles).catch(console.error);
     sendMessage("file-deleted",{projectId,path,type});
-  },[active,projectId]);
+  },[active,projectId,saveWholeTree]);
 
   const renameItem=useCallback((old,nn,type)=>{
     const parts=old.split("/");parts[parts.length-1]=nn;const np=parts.join("/");
@@ -637,10 +649,16 @@ const Project=()=>{
   const killProcess = useCallback(async () => {
     if (!shellRef.current) return;
     addLine("^C  stopping server...", "warning");
+    if (serverReadyOff.current) {
+      try { serverReadyOff.current(); } catch { }
+      serverReadyOff.current = null;
+    }
     try { await shellRef.current.kill(); } catch { }
     shellRef.current = null;
+    wcMountedRef.current = false;
     setRunning(false);
     setPreviewSrc(null);
+    setPreviewUrl("");
   }, [addLine]);
   // ── One-click React scaffold ──────────────────────────────────────────────────
   const scaffoldReact=useCallback(async()=>{
@@ -744,6 +762,7 @@ const Project=()=>{
     setFiles(p=>({...p,[active]:{...p[active],content:newContent}}));
     clearTimeout(debRef.current);
     debRef.current=setTimeout(()=>{
+      if(!filesRef.current[active])return;
       // 1. Persist to DB
       axios.patch(`/projects/${projectId}/files/${encodeURIComponent(active)}`,
         {content:newContent,lang:activeLang}).catch(console.error);
@@ -1191,7 +1210,7 @@ const Project=()=>{
                   {hasReact&&shellRef.current&&!running&&(
                     <button onClick={()=>runWebContainerWith(null)} style={{background:C.accentSoft,border:`1px solid ${C.accentBrd}`,color:C.accent,borderRadius:4,padding:"2px 8px",cursor:"pointer",fontSize:10,fontFamily:"inherit",fontWeight:600}}>↺ Restart</button>
                   )}
-                  {running&&hasReact&&(
+                  {hasReact&&shellRef.current&&(
                     <button onClick={killProcess} style={{background:C.redSoft,border:`1px solid rgba(255,85,85,0.4)`,color:C.red,borderRadius:4,padding:"2px 8px",cursor:"pointer",fontSize:10,fontFamily:"inherit",fontWeight:600}}>■ Stop</button>
                   )}
                   <button onClick={clrLines} style={{background:"none",border:"none",color:C.textDim,cursor:"pointer",fontSize:10,fontFamily:"inherit",padding:"2px 6px",borderRadius:3}}
