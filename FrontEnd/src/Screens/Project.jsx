@@ -54,13 +54,90 @@ const WB={
   perl:"perl-5.38.0",scala:"scala-3.3.1",r:"r-4.3.1",csharp:"mono-6.12.0.200",
 };
 const WB_OPTS={cpp:"-std=c++17",c:"-x c -std=c11"};
+const WB_PREFIXES={
+  javascript:["nodejs-","nodejs"],
+  python:["cpython-","python-"],
+  java:["openjdk-"],
+  typescript:["typescript-"],
+  go:["go-"],
+  rust:["rust-"],
+  ruby:["ruby-"],
+  php:["php-"],
+  kotlin:["kotlin-"],
+  swift:["swift-"],
+  shell:["bash","shellcheck-"],
+  haskell:["ghc-"],
+  lua:["lua-"],
+  perl:["perl-"],
+  scala:["scala-"],
+  r:["r-"],
+  csharp:["mono-"],
+  cpp:["gcc-","clang-"],
+  c:["gcc-","clang-"],
+};
+let wbCompilerListPromise=null;
+const scoreCompiler=name=>{
+  if(!name)return -1;
+  let score=0;
+  if(!name.includes("head"))score+=1000;
+  const nums=(name.match(/\d+/g)||[]).map(Number);
+  nums.forEach((n,i)=>{score+=n*Math.pow(100,3-i);});
+  return score;
+};
+const getWandboxCompilerList=async()=>{
+  if(!wbCompilerListPromise){
+    wbCompilerListPromise=fetch("https://wandbox.org/api/list.json")
+      .then(async res=>{
+        if(!res.ok)throw new Error(`compiler list ${res.status}`);
+        const data=await res.json();
+        const names=(Array.isArray(data)?data:[])
+          .map(item=>item?.name||item?.compiler||"")
+          .filter(Boolean);
+        return [...new Set(names)];
+      })
+      .catch(err=>{
+        wbCompilerListPromise=null;
+        throw err;
+      });
+  }
+  return wbCompilerListPromise;
+};
+const getWandboxCandidates=async(lang)=>{
+  const fallback=WB[lang]?[WB[lang]]:[];
+  try{
+    const list=await getWandboxCompilerList();
+    const prefixes=WB_PREFIXES[lang]||[];
+    const matched=list
+      .filter(name=>prefixes.some(prefix=>name.startsWith(prefix)))
+      .sort((a,b)=>scoreCompiler(b)-scoreCompiler(a));
+    return [...new Set([...fallback,...matched])];
+  }catch{
+    return fallback;
+  }
+};
 const wandbox=async(code,lang)=>{
-  const compiler=WB[lang];
-  if (!compiler) throw new Error(`"${lang}" not runnable in browser`);
-  if (lang==="java") code=code.replace(/public\s+class\s+\w+/g,"public class Main");
-  const res=await fetch("https://wandbox.org/api/compile.json",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({compiler,code,options:WB_OPTS[lang]||"","compiler-option-raw":WB_OPTS[lang]||""})});
-  if (!res.ok) throw new Error(`Wandbox error ${res.status}`);
-  return res.json();
+  const candidates=await getWandboxCandidates(lang);
+  if (!candidates.length) throw new Error(`"${lang}" not runnable in browser`);
+  const finalCode=lang==="java"
+    ?code.replace(/public\s+class\s+\w+/g,"public class Main")
+    :code;
+  let lastError="unknown error";
+  for(const compiler of candidates){
+    const res=await fetch("https://wandbox.org/api/compile.json",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        compiler,
+        code:finalCode,
+        options:WB_OPTS[lang]||"",
+        "compiler-option-raw":WB_OPTS[lang]||"",
+      }),
+    });
+    if(res.ok)return res.json();
+    lastError=`${compiler} -> ${res.status}`;
+    if(res.status<500)break;
+  }
+  throw new Error(`Wandbox failed (${lastError})`);
 };
 
 // ─── Cursor colours ───────────────────────────────────────────────────────────
