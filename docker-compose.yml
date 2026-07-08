@@ -1,0 +1,32 @@
+services:
+  backend:
+    build:
+      context: ./BACKEND
+      dockerfile: Dockerfile
+    container_name: gemchat-backend
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      MONGO_URI: ${MONGO_URI:-mongodb+srv://SOEN:cJdJ201azN04KgV2@soen.e8cglgo.mongodb.net/}
+      JWT_SECRET: ${JWT_SECRET:-soen_secret}
+      REDIS_HOST: ${REDIS_HOST:-}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:5173}
+      TRUST_PROXY: "false"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./FrontEnd
+      dockerfile: Dockerfile
+    container_name: gemchat-frontend
+    ports:  
+      - "5173:5173"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+    depends_on:
+      - backend
+    restart: unless-stopped
