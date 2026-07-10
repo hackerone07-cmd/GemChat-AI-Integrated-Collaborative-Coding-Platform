@@ -1,5 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
 
+dotenv.config();
 // ── Validate key on startup ────────────────────────────────────────────────
 const API_KEY = process.env.GOOGLE_API_KEY;
 

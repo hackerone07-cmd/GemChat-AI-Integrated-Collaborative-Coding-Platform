@@ -43,6 +43,12 @@ Frontend: create `FrontEnd/.env`
 VITE_API_URL=http://localhost:3000
 ```
 
+If you are running the app through `docker compose`, use:
+
+```env
+VITE_API_URL=http://localhost:4000
+```
+
 Templates are included in:
 
 - `BACKEND/.env.example`
