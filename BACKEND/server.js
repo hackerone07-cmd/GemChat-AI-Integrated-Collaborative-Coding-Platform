@@ -7,6 +7,7 @@ import jwt        from "jsonwebtoken";
 import mongoose   from "mongoose";
 import ProjectModel from "./models/Project.model.js";
 import UserModel    from "./models/user.model.js";
+import { generateResult } from "./services/ai.service.js";
 import {
   decodeFileKey,
   encodeFileKey,
