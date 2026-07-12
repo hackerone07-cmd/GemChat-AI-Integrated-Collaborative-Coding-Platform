@@ -7,7 +7,7 @@ import axios from "../Config/axios.config.js";
 import {
   initializeSocket, receiveMessage, sendMessage, disconnectSocket,
 } from "../Config/socket.config.js";
-import { UserContext } from "../Context/user.context";
+import { UserContext } from "../Context/user.context.js";
 import { getWebcontainer } from "../Config/Webcontainer.js";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
@@ -430,7 +430,6 @@ const Project=()=>{
 
   // ── Editor ───────────────────────────────────────────────────────────────────
   const [curPos,setCurPos]=useState({line:1,col:1});
-  const [loading,setLoading]=useState(true);
   const edRef=useRef(null);const moRef=useRef(null);
   const decRef=useRef([]);const debRef=useRef(null);const supRef=useRef(false);
 
@@ -480,7 +479,7 @@ const Project=()=>{
           _id: location.state.project._id,
           name: location.state.project.name ?? "untitled",
         }));
-      }catch{}
+      }catch(error){ void error; }
     }
   },[location.state]);
 
@@ -489,7 +488,7 @@ const Project=()=>{
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
   const addLine=useCallback((t,type="output")=>setLines(p=>[...p,{t:String(t),type,id:uid()}]),[]);
-  const clrLines=()=>setLines([]);
+  const clrLines=useCallback(()=>setLines([]),[]);
   const lc=t=>({command:"#f0c040",error:C.red,success:C.green,info:"#89dceb",warning:C.yellow}[t]||"#ccc");
   const packageFingerprint = useCallback((tree) => (
     `${tree["package.json"]?.content ?? ""}\n@@LOCK@@\n${tree["package-lock.json"]?.content ?? ""}`
@@ -503,7 +502,7 @@ const Project=()=>{
         let current = "";
         for (const dir of dirs) {
           current = current ? `${current}/${dir}` : dir;
-          try { await inst.fs.mkdir(current); } catch {}
+          try { await inst.fs.mkdir(current); } catch (error) { void error; }
         }
         await inst.fs.writeFile(path, content);
       })
@@ -561,7 +560,7 @@ const Project=()=>{
     html:n=>`<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>${n}</title>\n  <style>body{margin:0;font-family:system-ui;background:#1c1c1c;color:#d4d4d4;}</style>\n</head>\n<body>\n  <h1>Hello, World!</h1>\n</body>\n</html>\n`,
     css:n=>`/* ${n} */\nbody{margin:0;background:#1c1c1c;color:#d4d4d4;font-family:system-ui;}\n`,
   };
-  const starter=(name,lang)=>{const s=STARTS[lang];return s?typeof s==="function"?s(name):s:"";};
+  const starter=useCallback((name,lang)=>{const s=STARTS[lang];return s?typeof s==="function"?s(name):s:"";},[]);
 
   // ── CRUD — every mutation persists to DB immediately ─────────────────────────
   const createFile=useCallback((par,raw)=>{
@@ -667,12 +666,12 @@ const Project=()=>{
   const runWebContainerWith = useCallback(async (fileMap) => {
     // Kill any running process first
     if (shellRef.current) {
-      try { await shellRef.current.kill(); } catch {}
+      try { await shellRef.current.kill(); } catch (error) { void error; }
       shellRef.current = null;
     }
     // Remove any previous server-ready listener
     if (serverReadyOff.current) {
-      try { serverReadyOff.current(); } catch {}
+      try { serverReadyOff.current(); } catch (error) { void error; }
       serverReadyOff.current = null;
     }
 
@@ -766,10 +765,10 @@ const Project=()=>{
     if (!shellRef.current) return;
     addLine("^C  stopping server...", "warning");
     if (serverReadyOff.current) {
-      try { serverReadyOff.current(); } catch { }
+      try { serverReadyOff.current(); } catch (error) { void error; }
       serverReadyOff.current = null;
     }
-    try { await shellRef.current.kill(); } catch { }
+    try { await shellRef.current.kill(); } catch (error) { void error; }
     shellRef.current = null;
     setRunning(false);
     setPreviewSrc(null);
@@ -1009,7 +1008,7 @@ const Project=()=>{
         setTabs(sortedPaths);
         setActive(sortedPaths[0]);
       }
-    }).catch(console.error).finally(()=>mounted&&setLoading(false));
+    }).catch(console.error);
     return()=>{mounted=false;disconnectSocket();};
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[projectId]);

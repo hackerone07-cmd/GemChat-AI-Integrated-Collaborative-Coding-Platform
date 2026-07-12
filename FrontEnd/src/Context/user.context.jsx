@@ -1,6 +1,5 @@
-import React, { createContext, useState, useContext, useEffect } from "react";
-
-export const UserContext = createContext();
+import React, { useState } from "react";
+import { UserContext } from "./user.context.js";
 
 export const UserProvider = ({ children }) => {
   // Hydrate from localStorage on first load — fixes auth guard on refresh
@@ -28,10 +27,4 @@ export const UserProvider = ({ children }) => {
       {children}
     </UserContext.Provider>
   );
-};
-
-export const useUser = () => {
-  const ctx = useContext(UserContext);
-  if (!ctx) throw new Error("useUser must be used within a UserProvider");
-  return ctx;
 };
