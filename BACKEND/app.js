@@ -4,13 +4,9 @@ import cors          from "cors";
 import cookieParser  from "cookie-parser";
 import rateLimit     from "express-rate-limit";
 import mongoose      from "mongoose";
-import connect       from "./db/db.js";
 import userRouter    from "./routes/user.route.js";
 import projectRouter from "./routes/Project.route.js";
 import aiRouter      from "./routes/ai.route.js";
-
-
-connect();
 
 const app = express();
 

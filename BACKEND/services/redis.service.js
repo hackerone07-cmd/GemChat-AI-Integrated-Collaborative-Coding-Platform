@@ -1,18 +1,27 @@
 import Redis from "ioredis";
 
+let redisClient = null;
 
-const redisClient  = new Redis({
-    host: process.env.REDIS_HOST,
-    port: process.env.REDIS_PORT,
-    password: process.env.REDIS_PASSWORD,
-});
+export const getRedisClient = () => {
+  if (!process.env.REDIS_HOST || !process.env.REDIS_PORT) {
+    return null;
+  }
 
-redisClient.on('connect',()=>{
-      console.log('redis connected')
-})
+  if (!redisClient) {
+    redisClient = new Redis({
+      host: process.env.REDIS_HOST,
+      port: Number(process.env.REDIS_PORT),
+      password: process.env.REDIS_PASSWORD,
+    });
 
-redisClient.on("error", (err) => {
-  console.error("Redis connection error:", err.message);
-});
+    redisClient.on("connect", () => {
+      console.log("redis connected");
+    });
 
-export default redisClient;
+    redisClient.on("error", (err) => {
+      console.error("Redis connection error:", err.message);
+    });
+  }
+
+  return redisClient;
+};

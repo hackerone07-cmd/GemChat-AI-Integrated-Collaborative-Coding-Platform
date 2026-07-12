@@ -1,6 +1,7 @@
 import "dotenv/config";
 import http       from "http";
 import app        from "./app.js";
+import connect    from "./db/db.js";
 import { Server } from "socket.io";
 import jwt        from "jsonwebtoken";
 import mongoose   from "mongoose";
@@ -256,4 +257,9 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(port, () => console.log(`🚀 Server on port ${port}`));
+const start = async () => {
+  await connect();
+  server.listen(port, () => console.log(`🚀 Server on port ${port}`));
+};
+
+start();
