@@ -53,6 +53,19 @@ const WB={
   swift:"swift-5.9.1",shell:"bash",haskell:"ghc-9.6.3",lua:"lua-5.4.4",
   perl:"perl-5.38.0",scala:"scala-3.3.1",r:"r-4.3.1",csharp:"mono-6.12.0.200",
 };
+
+const STARTS = {
+  javascript:"// New file\nconsole.log('Hello!');\n",
+  typescript:"const greet=(n:string):string=>`Hello, ${n}!`;\nconsole.log(greet('World'));\n",
+  python:"# New file\nprint('Hello!')\n",
+  java:n=>`public class ${n.replace(/\.\w+$/,"")} {\n    public static void main(String[] args) {\n        System.out.println("Hello!");\n    }\n}\n`,
+  cpp:"#include <iostream>\nusing namespace std;\nint main(){\n    cout << \"Hello!\" << endl;\n    return 0;\n}\n",
+  c:"#include <stdio.h>\nint main(){\n    printf(\"Hello!\\n\");\n    return 0;\n}\n",
+  go:`package main\nimport "fmt"\nfunc main(){\n    fmt.Println("Hello!")\n}\n`,
+  rust:`fn main(){\n    println!("Hello!");\n}\n`,
+  html:n=>`<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>${n}</title>\n  <style>body{margin:0;font-family:system-ui;background:#1c1c1c;color:#d4d4d4;}</style>\n</head>\n<body>\n  <h1>Hello, World!</h1>\n</body>\n</html>\n`,
+  css:n=>`/* ${n} */\nbody{margin:0;background:#1c1c1c;color:#d4d4d4;font-family:system-ui;}\n`,
+};
 const WB_OPTS={cpp:"-std=c++17",c:"-x c -std=c11"};
 const WB_PREFIXES={
   javascript:["nodejs-","nodejs"],
@@ -421,7 +434,6 @@ const Project=()=>{
   const [sideOpen,setSideOpen]=useState(true);
   const [rpTab,setRpTab]=useState("console");
   const [rpWidth,setRpWidth]=useState(370);        // ← resizable right panel
-  const rpDragRef=useRef(null);
 
   // ── Invite ───────────────────────────────────────────────────────────────────
   const [inviteOpen,setInviteOpen]=useState(false);
@@ -547,19 +559,6 @@ const Project=()=>{
     setTabs(p=>{const n=p.filter(t=>t!==path);if(active===path)setActive(n[n.length-1]||null);return n;});
   },[active]);
 
-  // ── File starters ─────────────────────────────────────────────────────────────
-  const STARTS={
-    javascript:"// New file\nconsole.log('Hello!');\n",
-    typescript:"const greet=(n:string):string=>`Hello, ${n}!`;\nconsole.log(greet('World'));\n",
-    python:"# New file\nprint('Hello!')\n",
-    java:n=>`public class ${n.replace(/\.\w+$/,"")} {\n    public static void main(String[] args) {\n        System.out.println("Hello!");\n    }\n}\n`,
-    cpp:"#include <iostream>\nusing namespace std;\nint main(){\n    cout << \"Hello!\" << endl;\n    return 0;\n}\n",
-    c:"#include <stdio.h>\nint main(){\n    printf(\"Hello!\\n\");\n    return 0;\n}\n",
-    go:`package main\nimport "fmt"\nfunc main(){\n    fmt.Println("Hello!")\n}\n`,
-    rust:`fn main(){\n    println!("Hello!");\n}\n`,
-    html:n=>`<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>${n}</title>\n  <style>body{margin:0;font-family:system-ui;background:#1c1c1c;color:#d4d4d4;}</style>\n</head>\n<body>\n  <h1>Hello, World!</h1>\n</body>\n</html>\n`,
-    css:n=>`/* ${n} */\nbody{margin:0;background:#1c1c1c;color:#d4d4d4;font-family:system-ui;}\n`,
-  };
   const starter=useCallback((name,lang)=>{const s=STARTS[lang];return s?typeof s==="function"?s(name):s:"";},[]);
 
   // ── CRUD — every mutation persists to DB immediately ─────────────────────────
@@ -573,7 +572,7 @@ const Project=()=>{
     // Persist to DB
     axios.patch(`/projects/${projectId}/files/${encodeURIComponent(fp)}`,{content,lang}).catch(console.error);
     sendMessage("file-created",{projectId,path:fp,content,lang});
-  },[files,openFile,projectId,writeFileToContainer]);
+  },[files,openFile,projectId,starter,writeFileToContainer]);
 
   const createFolder=useCallback((par,raw)=>{
     const name=raw.trim();const fp=par?`${par}/${name}`:name;
@@ -758,7 +757,7 @@ const Project=()=>{
       setRunning(false);
     }
   // Only addLine — no files/wc state in deps. filesRef always has latest files.
-  }, [addLine, packageFingerprint]);
+  }, [addLine, packageFingerprint, clrLines]);
 
   // ── Kill the running WebContainer process (dev server) ────────────────────────
   const killProcess = useCallback(async () => {
@@ -941,7 +940,7 @@ const Project=()=>{
         try{
           const p=JSON.parse(d.message);
           if(p?.fileTree){const nf={};Object.entries(p.fileTree).forEach(([fn,n])=>{nf[fn]={content:n?.file?.contents??"",lang:getLang(fn)};});setFiles(pr=>({...pr,...nf}));const f=Object.keys(nf)[0];if(f)openFile(f);}
-        }catch{}
+        }catch(error){ void error; }
       }
     });
     receiveMessage("members-list",m=>setMembers(Array.isArray(m)?m:[]));
@@ -1384,7 +1383,7 @@ const Project=()=>{
                   // Mark unread incoming messages with a subtle indicator
                   const isUnread=!isOut&&!m.read;
                   let txt=m.message;
-                  if(isAI){try{txt=JSON.parse(m.message)?.text||m.message;}catch{}}
+                  if(isAI){try{txt=JSON.parse(m.message)?.text||m.message;}catch(error){ void error; }}
                   const cc=colFor(m.sender);
                   return(
                     <div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:isOut?"flex-end":"flex-start"}}>
