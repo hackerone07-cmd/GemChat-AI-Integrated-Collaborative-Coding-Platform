@@ -1,7 +1,7 @@
 import ProjectModel from "../models/Project.model.js";
 import UserModel    from "../models/user.model.js";
 import * as svc     from "../services/Project.service.js";
-import { io }       from "../server.js";
+import { getIo }    from "../socket.js";
 import {
   decodeFileKey,
   encodeFileKey,
@@ -23,6 +23,11 @@ const getMe = async (req) => {
     if (user) return user;
   }
   throw Object.assign(new Error("User not found"), { status: 401 });
+};
+
+const emit = (...args) => {
+  const io = getIo();
+  if (io) io.to(args[0]).emit(args[1], args[2]);
 };
 
 // ── Member / admin guards ─────────────────────────────────────────────────────
@@ -85,7 +90,7 @@ export const deleteProject = async (req, res) => {
     if (!project) return res.status(404).json({ error: "Not found" });
     assertAdmin(project, me._id);
     await project.deleteOne();
-    io.to(req.params.projectId).emit("project-deleted", { projectId: req.params.projectId });
+    emit(req.params.projectId, "project-deleted", { projectId: req.params.projectId });
     res.status(200).json({ message: "Deleted" });
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message });
@@ -116,8 +121,8 @@ export const removeMember = async (req, res) => {
     project.admins = project.admins.filter(a => (a._id ?? a).toString() !== req.params.targetUserId);
     await project.save();
 
-    io.to(req.params.projectId).emit("member-removed", { userId: req.params.targetUserId });
-    io.to(req.params.projectId).emit("kicked", { projectId: req.params.projectId, userId: req.params.targetUserId });
+    emit(req.params.projectId, "member-removed", { userId: req.params.targetUserId });
+    emit(req.params.projectId, "kicked", { projectId: req.params.projectId, userId: req.params.targetUserId });
     res.status(200).json({ message: "Removed" });
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message });
@@ -160,7 +165,7 @@ export const promoteToAdmin = async (req, res) => {
       project.admins.push(targetId);
       await project.save();
     }
-    io.to(req.params.projectId).emit("member-promoted", { userId: targetId });
+    emit(req.params.projectId, "member-promoted", { userId: targetId });
     res.status(200).json({ message: "Promoted" });
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message });

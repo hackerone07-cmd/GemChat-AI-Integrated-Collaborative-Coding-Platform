@@ -6,12 +6,12 @@ import jwt        from "jsonwebtoken";
 import mongoose   from "mongoose";
 import ProjectModel from "./models/Project.model.js";
 import UserModel    from "./models/user.model.js";
-import { generateResult } from "./services/ai.service.js";
 import {
   decodeFileKey,
   encodeFileKey,
   normalizeFileEntry,
 } from "./utils/fileTree.js";
+import { setIo } from "./socket.js";
 
 const port   = process.env.PORT || 3000;
 const server = http.createServer(app);
@@ -27,6 +27,7 @@ const io = new Server(server, {
   },
   maxHttpBufferSize: 5e6, // 5 MB — allow large file payloads
 });
+setIo(io);
 
 // ── Auth middleware ──────────────────────────────────────
 io.use(async (socket, next) => {
@@ -255,5 +256,4 @@ io.on("connection", (socket) => {
   });
 });
 
-export { io };
 server.listen(port, () => console.log(`🚀 Server on port ${port}`));
