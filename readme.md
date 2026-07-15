@@ -100,122 +100,28 @@ Run backend in production:
 npm run start
 ```
 
-## Deployment
+## Docker Hub Publishing
 
-Recommended setup:
+This repo includes a GitHub Actions workflow in `.github/workflows/ci.yml` that builds and pushes Docker images only. It does not deploy the app anywhere.
 
-1. Deploy `BACKEND` to Render, Railway, or a VPS.
-2. Deploy `FrontEnd` to Vercel or Netlify.
-3. Point frontend `VITE_API_URL` to the deployed backend URL.
-4. Set backend `CLIENT_URL` to the deployed frontend URL.
+Images published by the workflow:
 
-Included deploy config files:
+- `hackerone07/gemchat-backend`
+- `hackerone07/gemchat-frontend`
 
-- `render.yaml` for Render blueprint deploy
-- `FrontEnd/vercel.json` for Vercel
-- `FrontEnd/netlify.toml` for Netlify
+The workflow tags each image as:
 
-### Backend Deployment Steps
+- `latest`
+- the current Git commit SHA
 
-Use `BACKEND` as the service root.
+To enable the push, add these GitHub repository secrets:
 
-Build command:
+- `DOCKERHUB_USERNAME` = `hackerone07`
+- `DOCKERHUB_TOKEN` = your Docker Hub password or access token
 
-```bash
-npm install
-```
+The workflow runs on pushes to `main` and can also be started manually from GitHub Actions.
 
-Start command:
-
-```bash
-npm start
-```
-
-Required backend env vars:
-
-- `PORT`
-- `MONGO_URI`
-- `JWT_SECRET`
-- `GOOGLE_API_KEY`
-- `CLIENT_URL`
-- `TRUST_PROXY=true` on Render/Railway/reverse-proxy platforms
-
-After deploy, verify:
-
-- `GET /health` returns `200`
-- Socket connection works from the frontend
-- MongoDB allows connections from your backend host
-
-### One-Click Render Deploy
-
-This repo now includes `render.yaml`.
-
-Steps:
-
-1. Push the repo to GitHub.
-2. In Render, choose `New +` → `Blueprint`.
-3. Select your GitHub repo.
-4. Render will detect `render.yaml` and create:
-   - `gemchat-backend`
-   - `gemchat-frontend`
-5. Fill in the unsynced env vars:
-   - `MONGO_URI`
-   - `JWT_SECRET`
-   - `GOOGLE_API_KEY`
-   - `CLIENT_URL`
-   - `VITE_API_URL`
-6. Set:
-   - backend `CLIENT_URL` = frontend Render URL
-   - frontend `VITE_API_URL` = backend Render URL
-7. Deploy both services.
-
-### Frontend Deployment Steps
-
-Use `FrontEnd` as the project root.
-
-Build command:
-
-```bash
-npm install && npm run build
-```
-
-Output directory:
-
-```text
-dist
-```
-
-Required frontend env vars:
-
-- `VITE_API_URL=https://your-backend-domain.com`
-
-`FrontEnd/vercel.json` already contains SPA rewrites and the required COOP/COEP headers for WebContainer support.
-
-### Netlify Frontend Deploy
-
-`FrontEnd/netlify.toml` is included.
-
-Use:
-
-- Base directory: `FrontEnd`
-- Build command: `npm install && npm run build`
-- Publish directory: `dist`
-- Env var: `VITE_API_URL=https://your-backend-domain.com`
-
-## Deploy Checklist
-
-- Create MongoDB Atlas database
-- Add backend environment variables
-- Add frontend environment variables
-- Set backend `CLIENT_URL` to the exact frontend domain
-- Set frontend `VITE_API_URL` to the exact backend domain
-- Enable `TRUST_PROXY=true` if backend is behind Render/Railway/Nginx
-- Test `/health`
-- Open one project and verify:
-  - files persist after refresh
-  - chat persists after refresh
-  - AI replies work
-  - React preview loads
+The frontend image is built with `VITE_API_URL` at build time. If you need to point it at a real backend, pass that value when building or set the matching GitHub variable before the workflow runs.
 
 ## Notes
 
